@@ -1,0 +1,132 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  nombre    String
+  email     String   @unique
+  password  String
+  rolId     Int
+  rol       Rol      @relation(fields: [rolId], references: [id])
+  legajos   Legajo[]
+  solicitudes Solicitud[]
+  prestamos   Prestamo[]
+  devoluciones Devolucion[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Rol {
+  id        Int      @id @default(autoincrement())
+  nombre    String   @unique
+  usuarios  Usuario[]
+}
+
+model Legajo {
+  id          Int      @id @default(autoincrement())
+  titulo      String
+  descripcion String?
+  usuarioId   Int
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id])
+  archivos    Archivo[]
+  estado      String
+  currentHolderId Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  // Relaciones inversas para workflow
+  solicitudes SolicitudLegajo[] @relation("LegajoSolicitudes")
+  prestamos   Prestamo[]
+  devoluciones DevolucionLegajo[] @relation("LegajoDevoluciones")
+}
+
+model Archivo {
+  id        Int      @id @default(autoincrement())
+  nombre    String
+  url       String
+  legajoId  Int
+  legajo    Legajo   @relation(fields: [legajoId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+enum SolicitudStatus {
+  PENDING
+  APPROVED
+  COMPLETED
+  REJECTED
+}
+
+enum PrestamoStatus {
+  ACTIVE
+  PENDING_RETURN
+  RETURNED
+}
+
+model Solicitud {
+  id            Int              @id @default(autoincrement())
+  usuarioId     Int
+  usuario       Usuario          @relation(fields: [usuarioId], references: [id])
+  status        SolicitudStatus  @default(PENDING)
+  createdAt     DateTime         @default(now())
+  approvedAt    DateTime?
+  completedAt   DateTime?
+  rejectedAt    DateTime?
+  notes         String?
+  legajos       SolicitudLegajo[] @relation("SolicitudLegajos")
+  approvedFileIds Int[] @default([])
+  blockedFileIds  Int[] @default([])
+}
+
+model SolicitudLegajo {
+  id          Int       @id @default(autoincrement())
+  solicitudId Int
+  solicitud   Solicitud @relation(fields: [solicitudId], references: [id], name: "SolicitudLegajos")
+  legajoId    Int
+  legajo      Legajo    @relation(fields: [legajoId], references: [id], name: "LegajoSolicitudes")
+}
+
+enum DevolucionStatus {
+  PENDING_RETURN
+  RETURNED
+}
+
+model Devolucion {
+  id          Int              @id @default(autoincrement())
+  usuarioId   Int
+  usuario     Usuario          @relation(fields: [usuarioId], references: [id])
+  status      DevolucionStatus @default(PENDING_RETURN)
+  createdAt   DateTime         @default(now())
+  completedAt DateTime?
+  legajos     DevolucionLegajo[] @relation("DevolucionLegajos")
+}
+
+model DevolucionLegajo {
+  id            Int        @id @default(autoincrement())
+  devolucionId  Int
+  devolucion    Devolucion @relation(fields: [devolucionId], references: [id], name: "DevolucionLegajos")
+  legajoId      Int
+  legajo        Legajo     @relation(fields: [legajoId], references: [id], name: "LegajoDevoluciones")
+}
+
+model Prestamo {
+  id           Int            @id @default(autoincrement())
+  usuarioId    Int
+  usuario      Usuario        @relation(fields: [usuarioId], references: [id])
+  legajoId     Int
+  legajo       Legajo         @relation(fields: [legajoId], references: [id])
+  status       PrestamoStatus @default(ACTIVE)
+  createdAt    DateTime       @default(now())
+  returnedAt   DateTime?
+  notes        String?
+}
