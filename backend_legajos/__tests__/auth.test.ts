@@ -5,20 +5,18 @@ import { prisma } from '../src/prisma';
 const TEST_EMAIL = 'test@example.com';
 
 describe('Auth flow', () => {
+  let adminRoleId: number;
   beforeAll(async () => {
-    // Ensure role exists
     const adminRole = await prisma.rol.upsert({
       where: { nombre: 'admin' },
       update: {},
       create: { nombre: 'admin' }
     });
+    adminRoleId = adminRole.id;
   });
 
   afterAll(async () => {
-    await prisma.archivo.deleteMany();
-    await prisma.legajo.deleteMany();
     await prisma.usuario.deleteMany({ where: { email: TEST_EMAIL } });
-    await prisma.$disconnect();
   });
 
   it('signup and login', async () => {
@@ -26,7 +24,7 @@ describe('Auth flow', () => {
       nombre: 'Tester',
       email: TEST_EMAIL,
       password: 'supersecret',
-      rolId: 1
+      rolId: adminRoleId
     });
     expect(signup.status).toBe(201);
     expect(signup.body.token).toBeDefined();

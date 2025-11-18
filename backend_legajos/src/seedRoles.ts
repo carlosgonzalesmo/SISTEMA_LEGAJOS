@@ -2,7 +2,7 @@ import { prisma } from './prisma';
 
 async function main() {
   const existing = await prisma.rol.findMany();
-  const needed = ['admin','user'].filter(r => !existing.some((e: { nombre: string }) => e.nombre === r));
+  const needed = ['admin','user','sysadmin'].filter(r => !existing.some((e: { nombre: string }) => e.nombre === r));
   if (needed.length === 0) {
     console.log('Roles ya existen, nada que hacer');
     return;

@@ -21,9 +21,12 @@ model Usuario {
   rolId     Int
   rol       Rol      @relation(fields: [rolId], references: [id])
   legajos   Legajo[]
+  holdingLegajos Legajo[] @relation("CurrentHolder")
   solicitudes Solicitud[]
   prestamos   Prestamo[]
   devoluciones Devolucion[]
+  holderHistory LegajoHolderHistory[]
+  activo    Boolean  @default(true) // Soft delete / disable flag
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -36,6 +39,7 @@ model Rol {
 
 model Legajo {
   id          Int      @id @default(autoincrement())
+  codigo      String   @unique
   titulo      String
   descripcion String?
   usuarioId   Int
@@ -43,12 +47,14 @@ model Legajo {
   archivos    Archivo[]
   estado      String
   currentHolderId Int?
+  currentHolder   Usuario? @relation("CurrentHolder", fields: [currentHolderId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   // Relaciones inversas para workflow
   solicitudes SolicitudLegajo[] @relation("LegajoSolicitudes")
   prestamos   Prestamo[]
   devoluciones DevolucionLegajo[] @relation("LegajoDevoluciones")
+  holderHistory LegajoHolderHistory[]
 }
 
 model Archivo {
@@ -129,4 +135,14 @@ model Prestamo {
   createdAt    DateTime       @default(now())
   returnedAt   DateTime?
   notes        String?
+}
+
+model LegajoHolderHistory {
+  id         Int      @id @default(autoincrement())
+  legajoId   Int
+  legajo     Legajo   @relation(fields: [legajoId], references: [id])
+  usuarioId  Int
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id])
+  startedAt  DateTime @default(now())
+  endedAt    DateTime?
 }

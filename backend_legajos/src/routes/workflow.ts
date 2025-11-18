@@ -33,10 +33,18 @@ async function isAdmin(userId: number) {
   return rol?.nombre?.toLowerCase() === 'admin';
 }
 
+async function isSysadmin(userId: number) {
+  const u = await prisma.usuario.findUnique({ where: { id: userId } });
+  if (!u) return false;
+  const rol = await prisma.rol.findUnique({ where: { id: u.rolId } });
+  return rol?.nombre?.toLowerCase() === 'sysadmin';
+}
+
 // Create a new multi-file solicitud
 router.post('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const { legajoIds } = createSolicitudSchema.parse(req.body);
     // Use transaction to avoid race conditions when multiple users request same legajo
     const solicitudId = await prisma.$transaction(async (tx) => {
@@ -64,6 +72,7 @@ router.post('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) 
 router.get('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const admin = await isAdmin(req.userId);
     const where = admin ? {} : { usuarioId: req.userId };
     const data = await (prisma as any).solicitud.findMany({ where, orderBy: { id: 'desc' }, include: { legajos: { include: { legajo: true } }, usuario: true } });
@@ -98,6 +107,7 @@ router.post('/solicitudes/:id/prepare', authMiddleware, requireRole('admin'), as
 router.post('/solicitudes/:id/confirm-receipt', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const id = Number(req.params.id);
     const solicitud = await (prisma as any).solicitud.findUnique({ where: { id }, include: { legajos: true } });
     if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -106,7 +116,11 @@ router.post('/solicitudes/:id/confirm-receipt', authMiddleware, async (req: Auth
     // Only process approvedFileIds, not blocked ones.
     const approvedIds: number[] = (solicitud.approvedFileIds || []);
     if (approvedIds.length === 0) return res.status(400).json({ error: 'No hay legajos aprobados para confirmar recepción' });
-    await (prisma as any).legajo.updateMany({ where: { id: { in: approvedIds } }, data: { estado: 'on-loan', currentHolderId: req.userId } });
+    await prisma.legajo.updateMany({ where: { id: { in: approvedIds } }, data: { estado: 'on-loan', currentHolderId: req.userId } });
+    // History entries
+    if (approvedIds.length) {
+      await prisma.legajoHolderHistory.createMany({ data: approvedIds.map(id => ({ legajoId: id, usuarioId: req.userId as number })) });
+    }
     const updated = await (prisma as any).solicitud.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() } });
     res.json(updated);
   } catch (e) { next(e); }
@@ -116,6 +130,7 @@ router.post('/solicitudes/:id/confirm-receipt', authMiddleware, async (req: Auth
 router.post('/devoluciones', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const { legajoIds } = devolucionInitSchema.parse(req.body);
   const legajos = await (prisma as any).legajo.findMany({ where: { id: { in: legajoIds }, estado: 'on-loan', currentHolderId: req.userId } });
     if (legajos.length !== legajoIds.length) return res.status(400).json({ error: 'Algunos legajos no están en préstamo por el usuario actual' });
@@ -131,6 +146,7 @@ router.post('/devoluciones', authMiddleware, async (req: AuthRequest, res, next)
 router.get('/devoluciones', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
     if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const admin = await isAdmin(req.userId);
     const where = admin ? {} : { usuarioId: req.userId };
     const data = await (prisma as any).devolucion.findMany({ where, orderBy: { id: 'desc' }, include: { legajos: { include: { legajo: true } }, usuario: true } });
@@ -145,7 +161,9 @@ router.post('/devoluciones/:id/confirm', authMiddleware, requireRole('admin'), a
     if (!devolucion) return res.status(404).json({ error: 'Devolución no encontrada' });
     if (devolucion.status !== 'PENDING_RETURN') return res.status(400).json({ error: 'No está pendiente' });
     const legajoIds = devolucion.legajos.map((dl: any) => dl.legajoId);
-  await (prisma as any).legajo.updateMany({ where: { id: { in: legajoIds } }, data: { estado: 'available', currentHolderId: null } });
+  await prisma.legajo.updateMany({ where: { id: { in: legajoIds } }, data: { estado: 'available', currentHolderId: null } });
+  // Close history entries
+  await prisma.legajoHolderHistory.updateMany({ where: { legajoId: { in: legajoIds }, endedAt: null }, data: { endedAt: new Date() } });
     const updated = await (prisma as any).devolucion.update({ where: { id }, data: { status: 'RETURNED', completedAt: new Date() } });
     res.json(updated);
   } catch (e) { next(e); }
@@ -160,8 +178,10 @@ router.post('/clear', authMiddleware, requireRole('admin'), async (req: AuthRequ
   const deletedPrestamos = await (tx as any).prestamo.deleteMany({});
       const deletedSolicitudes = await (tx as any).solicitud.deleteMany({});
       const deletedDevoluciones = await (tx as any).devolucion.deleteMany({});
-  const resetLegajos = await (tx as any).legajo.updateMany({ where: { OR: [ { estado: 'requested' }, { estado: 'blocked' }, { estado: 'on-loan' }, { estado: 'pending-return' } ] }, data: { estado: 'available', currentHolderId: null } });
-      return { deletedSolicitudLegajos, deletedDevolucionLegajos, deletedPrestamos, deletedSolicitudes, deletedDevoluciones, resetLegajos };
+    const resetLegajos = await (tx as any).legajo.updateMany({ where: { OR: [ { estado: 'requested' }, { estado: 'blocked' }, { estado: 'on-loan' }, { estado: 'pending-return' } ] }, data: { estado: 'available', currentHolderId: null } });
+    // Close all open holder history records
+    const closedHistory = await (tx as any).legajoHolderHistory.updateMany({ where: { endedAt: null }, data: { endedAt: new Date() } });
+      return { deletedSolicitudLegajos, deletedDevolucionLegajos, deletedPrestamos, deletedSolicitudes, deletedDevoluciones, resetLegajos, closedHistory };
     });
     res.json({ ok: true, ...result });
   } catch (e) { next(e); }
