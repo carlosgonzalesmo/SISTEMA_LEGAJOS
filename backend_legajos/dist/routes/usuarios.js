@@ -67,7 +67,12 @@ router.post('/', auth_1.authMiddleware, (0, roles_1.requireRole)('sysadmin'), as
             return res.status(409).json({ error: 'Email ya existe' });
         const hash = await bcryptjs_1.default.hash(parsed.password, 10);
         const user = await usuarios_service_1.UsuariosService.create({ ...parsed, password: hash }, { include: { rol: true } });
-        res.status(201).json({ id: user.id, nombre: user.nombre, email: user.email, rolId: user.rolId, roleName: user.rol?.nombre, activo: true });
+        const payload = { id: user.id, nombre: user.nombre, email: user.email, rolId: user.rolId, roleName: user.rol?.nombre, activo: true };
+        res.status(201).json(payload);
+        try {
+            global.io?.emit('user:created', payload);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -117,7 +122,12 @@ router.put('/:id', auth_1.authMiddleware, async (req, res, next) => {
             }
         }
         const user = await usuarios_service_1.UsuariosService.update(id, updateData, { include: { rol: true } });
-        res.json({ id: user.id, nombre: user.nombre, email: user.email, rolId: user.rolId, roleName: user.rol?.nombre, activo: user.activo });
+        const payload = { id: user.id, nombre: user.nombre, email: user.email, rolId: user.rolId, roleName: user.rol?.nombre, activo: user.activo };
+        res.json(payload);
+        try {
+            global.io?.emit('user:updated', payload);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -139,7 +149,12 @@ router.post('/:id/disable', auth_1.authMiddleware, (0, roles_1.requireRole)('sys
         if (req.userId === id)
             return res.status(400).json({ error: 'No puedes deshabilitar tu propio usuario' });
         const updated = await usuarios_service_1.UsuariosService.update(id, { activo: false }, { include: { rol: true } });
-        res.json({ id: updated.id, nombre: updated.nombre, email: updated.email, rolId: updated.rolId, roleName: updated.rol?.nombre, activo: updated.activo });
+        const payload = { id: updated.id, nombre: updated.nombre, email: updated.email, rolId: updated.rolId, roleName: updated.rol?.nombre, activo: updated.activo };
+        res.json(payload);
+        try {
+            global.io?.emit('user:updated', payload);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -150,7 +165,12 @@ router.post('/:id/enable', auth_1.authMiddleware, (0, roles_1.requireRole)('sysa
     try {
         const id = Number(_req.params.id);
         const updated = await usuarios_service_1.UsuariosService.update(id, { activo: true }, { include: { rol: true } });
-        res.json({ id: updated.id, nombre: updated.nombre, email: updated.email, rolId: updated.rolId, roleName: updated.rol?.nombre, activo: updated.activo });
+        const payload = { id: updated.id, nombre: updated.nombre, email: updated.email, rolId: updated.rolId, roleName: updated.rol?.nombre, activo: updated.activo };
+        res.json(payload);
+        try {
+            global.io?.emit('user:updated', payload);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -174,6 +194,8 @@ router.post('/purge', auth_1.authMiddleware, (0, roles_1.requireRole)('sysadmin'
             prisma_1.prisma.prestamo.deleteMany({ where: { usuarioId: { in: ids } } }),
             prisma_1.prisma.solicitud.deleteMany({ where: { usuarioId: { in: ids } } }),
             prisma_1.prisma.devolucion.deleteMany({ where: { usuarioId: { in: ids } } }),
+            // Historial de titulares asociado a legajos de los usuarios O donde el usuario figura como titular histórico
+            prisma_1.prisma.legajoHolderHistory.deleteMany({ where: { OR: [{ usuarioId: { in: ids } }, { legajo: { usuarioId: { in: ids } } }] } }),
             // Archivos asociados a legajos de los usuarios a eliminar
             prisma_1.prisma.archivo.deleteMany({ where: { legajo: { usuarioId: { in: ids } } } }),
             // Legajos de los usuarios

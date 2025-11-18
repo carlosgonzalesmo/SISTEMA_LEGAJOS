@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { LegajosService } from '../services/legajos.service';
+import { createSocketServer } from '../socket'; // to satisfy imports if needed
+import { Server } from 'socket.io';
+const io: Server | undefined = (global as any).io;
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { z } from 'zod';
 import { prisma } from '../prisma';
@@ -93,7 +96,9 @@ router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, nex
 		const exists = await prisma.legajo.findFirst({ where: { codigo: finalCodigo } });
 		if (exists) return res.status(409).json({ error: 'Código ya existe' });
 		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId };
-		res.status(201).json(await LegajosService.create(data));
+		const created = await LegajosService.create(data);
+		res.status(201).json(created);
+		try { (global as any).io?.emit('legajo:created', created); console.log('[socket] legajo:created', created.id); } catch {}
 	} catch (e) { next(e); }
 });
 router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
@@ -124,8 +129,9 @@ router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, n
 		if (req.body.estado !== undefined) updates.estado = req.body.estado;
 		const updated = await LegajosService.update(id, updates);
 		res.json(updated);
+		try { (global as any).io?.emit('legajo:updated', updated); console.log('[socket] legajo:updated', updated.id); } catch {}
 	} catch (e) { next(e); }
 });
-router.delete('/:id', authMiddleware, denySysadmin, async (req, res, next) => { try { await LegajosService.delete(Number(req.params.id)); res.status(204).send(); } catch (e) { next(e); } });
+router.delete('/:id', authMiddleware, denySysadmin, async (req, res, next) => { try { const id = Number(req.params.id); await LegajosService.delete(id); res.status(204).send(); try { (global as any).io?.emit('legajo:deleted', { id }); console.log('[socket] legajo:deleted', id); } catch {} } catch (e) { next(e); } });
 
 export default router;

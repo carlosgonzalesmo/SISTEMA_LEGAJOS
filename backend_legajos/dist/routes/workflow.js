@@ -6,6 +6,7 @@ const roles_1 = require("../middleware/roles");
 const prisma_1 = require("../prisma");
 const zod_1 = require("zod");
 const router = (0, express_1.Router)();
+const io = global.io;
 // Schemas
 const createSolicitudSchema = zod_1.z.object({
     legajoIds: zod_1.z.array(zod_1.z.number().int()).min(1)
@@ -61,6 +62,10 @@ router.post('/solicitudes', auth_1.authMiddleware, async (req, res, next) => {
         });
         const full = await prisma_1.prisma.solicitud.findUnique({ where: { id: solicitudId }, include: { legajos: { include: { legajo: true } }, usuario: true } });
         res.status(201).json(full);
+        try {
+            io?.emit('solicitud:created', full);
+        }
+        catch { }
     }
     catch (e) {
         if (e.message === 'Algunos legajos no existen')
@@ -107,6 +112,10 @@ router.post('/solicitudes/:id/prepare', auth_1.authMiddleware, (0, roles_1.requi
         const updated = await prisma_1.prisma.solicitud.update({ where: { id }, data: { status: foundLegajoIds.length > 0 ? 'APPROVED' : 'REJECTED', approvedAt: foundLegajoIds.length > 0 ? new Date() : undefined, rejectedAt: foundLegajoIds.length === 0 ? new Date() : undefined, notes, approvedFileIds: foundLegajoIds, blockedFileIds: blockedLegajoIds } });
         const full = await prisma_1.prisma.solicitud.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
         res.json(full);
+        try {
+            io?.emit('solicitud:updated', full);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -138,6 +147,10 @@ router.post('/solicitudes/:id/confirm-receipt', auth_1.authMiddleware, async (re
         }
         const updated = await prisma_1.prisma.solicitud.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() } });
         res.json(updated);
+        try {
+            io?.emit('solicitud:updated', updated);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -159,6 +172,10 @@ router.post('/devoluciones', auth_1.authMiddleware, async (req, res, next) => {
         await prisma_1.prisma.devolucionLegajo.createMany({ data: legajoIds.map(id => ({ devolucionId: devolucion.id, legajoId: id })) });
         const full = await prisma_1.prisma.devolucion.findUnique({ where: { id: devolucion.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
         res.status(201).json(full);
+        try {
+            io?.emit('devolucion:created', full);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -194,6 +211,10 @@ router.post('/devoluciones/:id/confirm', auth_1.authMiddleware, (0, roles_1.requ
         await prisma_1.prisma.legajoHolderHistory.updateMany({ where: { legajoId: { in: legajoIds }, endedAt: null }, data: { endedAt: new Date() } });
         const updated = await prisma_1.prisma.devolucion.update({ where: { id }, data: { status: 'RETURNED', completedAt: new Date() } });
         res.json(updated);
+        try {
+            io?.emit('devolucion:updated', updated);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -214,6 +235,10 @@ router.post('/clear', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'), 
             return { deletedSolicitudLegajos, deletedDevolucionLegajos, deletedPrestamos, deletedSolicitudes, deletedDevoluciones, resetLegajos, closedHistory };
         });
         res.json({ ok: true, ...result });
+        try {
+            io?.emit('workflow:cleared', { ok: true });
+        }
+        catch { }
     }
     catch (e) {
         next(e);

@@ -3,10 +3,17 @@ import 'dotenv/config';
 import { app } from './app';
 import { ensureRoles } from './ensureRoles';
 import { prisma } from './prisma';
+import http from 'http';
+import { createSocketServer } from './socket';
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
-	console.log(`Servidor backend escuchando en puerto ${PORT}`);
+const server = http.createServer(app);
+const io = createSocketServer(server);
+// Exponer instancia global para emisiones desde rutas (legajos, workflow, usuarios)
+(global as any).io = io;
+
+server.listen(PORT, async () => {
+	console.log(`Servidor backend + Socket.IO escuchando en puerto ${PORT}`);
 	if (!process.env.DATABASE_URL) {
 		console.warn('ADVERTENCIA: DATABASE_URL no está definido. Asegúrate de tener .env cargado.');
 	}

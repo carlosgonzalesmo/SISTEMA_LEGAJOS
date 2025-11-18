@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const legajos_service_1 = require("../services/legajos.service");
+const io = global.io;
 const auth_1 = require("../middleware/auth");
 const zod_1 = require("zod");
 const prisma_1 = require("../prisma");
@@ -122,7 +123,12 @@ router.post('/', auth_1.authMiddleware, denySysadmin, async (req, res, next) => 
         if (exists)
             return res.status(409).json({ error: 'Código ya existe' });
         const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId };
-        res.status(201).json(await legajos_service_1.LegajosService.create(data));
+        const created = await legajos_service_1.LegajosService.create(data);
+        res.status(201).json(created);
+        try {
+            global.io?.emit('legajo:created', created);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
@@ -163,14 +169,23 @@ router.put('/:id', auth_1.authMiddleware, denySysadmin, async (req, res, next) =
             updates.estado = req.body.estado;
         const updated = await legajos_service_1.LegajosService.update(id, updates);
         res.json(updated);
+        try {
+            global.io?.emit('legajo:updated', updated);
+        }
+        catch { }
     }
     catch (e) {
         next(e);
     }
 });
 router.delete('/:id', auth_1.authMiddleware, denySysadmin, async (req, res, next) => { try {
-    await legajos_service_1.LegajosService.delete(Number(req.params.id));
+    const id = Number(req.params.id);
+    await legajos_service_1.LegajosService.delete(id);
     res.status(204).send();
+    try {
+        global.io?.emit('legajo:deleted', { id });
+    }
+    catch { }
 }
 catch (e) {
     next(e);
