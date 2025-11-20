@@ -5,8 +5,8 @@ const auth_1 = require("../middleware/auth");
 const roles_1 = require("../middleware/roles");
 const prisma_1 = require("../prisma");
 const zod_1 = require("zod");
+const logger_1 = require("../lib/logger");
 const router = (0, express_1.Router)();
-const io = global.io;
 // Schemas
 const createSolicitudSchema = zod_1.z.object({
     legajoIds: zod_1.z.array(zod_1.z.number().int()).min(1)
@@ -46,6 +46,7 @@ router.post('/solicitudes', auth_1.authMiddleware, async (req, res, next) => {
             return res.status(403).json({ error: 'No autorizado' });
         const { legajoIds } = createSolicitudSchema.parse(req.body);
         // Use transaction to avoid race conditions when multiple users request same legajo
+        let affectedLegajoIds = [];
         const solicitudId = await prisma_1.prisma.$transaction(async (tx) => {
             const legajos = await tx.legajo.findMany({ where: { id: { in: legajoIds } } });
             if (legajos.length !== legajoIds.length)
@@ -58,14 +59,29 @@ router.post('/solicitudes', auth_1.authMiddleware, async (req, res, next) => {
             await tx.solicitudLegajo.createMany({ data: legajoIds.map(id => ({ solicitudId: solicitud.id, legajoId: id })) });
             // Mark legajos as requested immediately to prevent duplicate solicitudes
             await tx.legajo.updateMany({ where: { id: { in: legajoIds } }, data: { estado: 'requested' } });
+            affectedLegajoIds = legajoIds.slice();
             return solicitud.id;
         });
         const full = await prisma_1.prisma.solicitud.findUnique({ where: { id: solicitudId }, include: { legajos: { include: { legajo: true } }, usuario: true } });
         res.status(201).json(full);
         try {
-            io?.emit('solicitud:created', full);
+            global.io?.emit('solicitud:created', full);
+            (0, logger_1.debug)('[socket] solicitud:created', full.id);
         }
         catch { }
+        // Emitir actualizaciones de cada legajo afectado (estado -> requested)
+        try {
+            if (affectedLegajoIds.length) {
+                const updatedLegajos = await prisma_1.prisma.legajo.findMany({ where: { id: { in: affectedLegajoIds } }, include: { currentHolder: true } });
+                for (const lg of updatedLegajos) {
+                    global.io?.emit('legajo:updated', lg);
+                    (0, logger_1.debug)('[socket] legajo:updated (requested by solicitud)', lg.id);
+                }
+            }
+        }
+        catch (e) {
+            (0, logger_1.error)('Emit legajo:updated (solicitud create) error', e);
+        }
     }
     catch (e) {
         if (e.message === 'Algunos legajos no existen')
@@ -113,9 +129,24 @@ router.post('/solicitudes/:id/prepare', auth_1.authMiddleware, (0, roles_1.requi
         const full = await prisma_1.prisma.solicitud.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
         res.json(full);
         try {
-            io?.emit('solicitud:updated', full);
+            global.io?.emit('solicitud:updated', full);
+            (0, logger_1.debug)('[socket] solicitud:updated', full.id);
         }
         catch { }
+        // Emit legajo updates (requested / blocked)
+        try {
+            const affected = [...foundLegajoIds, ...blockedLegajoIds];
+            if (affected.length) {
+                const legajos = await prisma_1.prisma.legajo.findMany({ where: { id: { in: affected } }, include: { currentHolder: true } });
+                for (const lg of legajos) {
+                    global.io?.emit('legajo:updated', lg);
+                    (0, logger_1.debug)('[socket] legajo:updated (prepare solicitud)', lg.id);
+                }
+            }
+        }
+        catch (e) {
+            (0, logger_1.error)('Emit legajo:updated (prepare solicitud) error', e);
+        }
     }
     catch (e) {
         next(e);
@@ -146,11 +177,27 @@ router.post('/solicitudes/:id/confirm-receipt', auth_1.authMiddleware, async (re
             await prisma_1.prisma.legajoHolderHistory.createMany({ data: approvedIds.map(id => ({ legajoId: id, usuarioId: req.userId })) });
         }
         const updated = await prisma_1.prisma.solicitud.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() } });
-        res.json(updated);
+        // Recuperar objeto completo con legajos y usuario para evitar payload parcial en frontend
+        const fullUpdated = await prisma_1.prisma.solicitud.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
+        res.json(fullUpdated);
         try {
-            io?.emit('solicitud:updated', updated);
+            global.io?.emit('solicitud:updated', fullUpdated);
+            (0, logger_1.debug)('[socket] solicitud:updated', fullUpdated.id);
         }
         catch { }
+        // Emit legajo updates (on-loan)
+        try {
+            if (approvedIds.length) {
+                const legajos = await prisma_1.prisma.legajo.findMany({ where: { id: { in: approvedIds } }, include: { currentHolder: true } });
+                for (const lg of legajos) {
+                    global.io?.emit('legajo:updated', lg);
+                    (0, logger_1.debug)('[socket] legajo:updated (confirm receipt)', lg.id);
+                }
+            }
+        }
+        catch (e) {
+            (0, logger_1.error)('Emit legajo:updated (confirm receipt) error', e);
+        }
     }
     catch (e) {
         next(e);
@@ -173,9 +220,21 @@ router.post('/devoluciones', auth_1.authMiddleware, async (req, res, next) => {
         const full = await prisma_1.prisma.devolucion.findUnique({ where: { id: devolucion.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
         res.status(201).json(full);
         try {
-            io?.emit('devolucion:created', full);
+            global.io?.emit('devolucion:created', full);
+            (0, logger_1.debug)('[socket] devolucion:created', full.id);
         }
         catch { }
+        // Emit legajo updates (pending-return)
+        try {
+            const legajos = await prisma_1.prisma.legajo.findMany({ where: { id: { in: legajoIds } }, include: { currentHolder: true } });
+            for (const lg of legajos) {
+                global.io?.emit('legajo:updated', lg);
+                (0, logger_1.debug)('[socket] legajo:updated (iniciar devolucion)', lg.id);
+            }
+        }
+        catch (e) {
+            (0, logger_1.error)('Emit legajo:updated (iniciar devolucion) error', e);
+        }
     }
     catch (e) {
         next(e);
@@ -210,11 +269,24 @@ router.post('/devoluciones/:id/confirm', auth_1.authMiddleware, (0, roles_1.requ
         // Close history entries
         await prisma_1.prisma.legajoHolderHistory.updateMany({ where: { legajoId: { in: legajoIds }, endedAt: null }, data: { endedAt: new Date() } });
         const updated = await prisma_1.prisma.devolucion.update({ where: { id }, data: { status: 'RETURNED', completedAt: new Date() } });
-        res.json(updated);
+        const fullUpdated = await prisma_1.prisma.devolucion.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
+        res.json(fullUpdated);
         try {
-            io?.emit('devolucion:updated', updated);
+            global.io?.emit('devolucion:updated', fullUpdated);
+            (0, logger_1.debug)('[socket] devolucion:updated', fullUpdated.id);
         }
         catch { }
+        // Emit legajo updates (available after return)
+        try {
+            const legajos = await prisma_1.prisma.legajo.findMany({ where: { id: { in: legajoIds } }, include: { currentHolder: true } });
+            for (const lg of legajos) {
+                global.io?.emit('legajo:updated', lg);
+                (0, logger_1.debug)('[socket] legajo:updated (confirm devolucion)', lg.id);
+            }
+        }
+        catch (e) {
+            (0, logger_1.error)('Emit legajo:updated (confirm devolucion) error', e);
+        }
     }
     catch (e) {
         next(e);
@@ -236,7 +308,8 @@ router.post('/clear', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'), 
         });
         res.json({ ok: true, ...result });
         try {
-            io?.emit('workflow:cleared', { ok: true });
+            global.io?.emit('workflow:cleared', { ok: true });
+            (0, logger_1.debug)('[socket] workflow:cleared');
         }
         catch { }
     }

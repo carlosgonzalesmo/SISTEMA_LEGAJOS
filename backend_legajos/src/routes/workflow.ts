@@ -3,9 +3,9 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { prisma } from '../prisma';
 import { z } from 'zod';
+import { debug, error as logError } from '../lib/logger';
 
 const router = Router();
-const io: any = (global as any).io;
 
 // Schemas
 const createSolicitudSchema = z.object({
@@ -48,6 +48,7 @@ router.post('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) 
     if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const { legajoIds } = createSolicitudSchema.parse(req.body);
     // Use transaction to avoid race conditions when multiple users request same legajo
+    let affectedLegajoIds: number[] = [];
     const solicitudId = await prisma.$transaction(async (tx) => {
       const legajos = await tx.legajo.findMany({ where: { id: { in: legajoIds } } });
       if (legajos.length !== legajoIds.length) throw new Error('Algunos legajos no existen');
@@ -58,11 +59,22 @@ router.post('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) 
       await (tx as any).solicitudLegajo.createMany({ data: legajoIds.map(id => ({ solicitudId: solicitud.id, legajoId: id })) });
       // Mark legajos as requested immediately to prevent duplicate solicitudes
       await tx.legajo.updateMany({ where: { id: { in: legajoIds } }, data: { estado: 'requested' } });
+      affectedLegajoIds = legajoIds.slice();
       return solicitud.id;
     });
     const full = await (prisma as any).solicitud.findUnique({ where: { id: solicitudId }, include: { legajos: { include: { legajo: true } }, usuario: true } });
     res.status(201).json(full);
-    try { io?.emit('solicitud:created', full); console.log('[socket] solicitud:created', full.id); } catch {}
+    try { (global as any).io?.emit('solicitud:created', full); debug('[socket] solicitud:created', full.id); } catch {}
+    // Emitir actualizaciones de cada legajo afectado (estado -> requested)
+    try {
+      if (affectedLegajoIds.length) {
+        const updatedLegajos = await prisma.legajo.findMany({ where: { id: { in: affectedLegajoIds } }, include: { currentHolder: true } });
+        for (const lg of updatedLegajos) {
+          (global as any).io?.emit('legajo:updated', lg);
+          debug('[socket] legajo:updated (requested by solicitud)', lg.id);
+        }
+      }
+    } catch (e) { logError('Emit legajo:updated (solicitud create) error', e); }
   } catch (e: any) {
     if (e.message === 'Algunos legajos no existen') return res.status(400).json({ error: e.message });
     if (e.message === 'Uno o más legajos no están disponibles') return res.status(409).json({ error: e.message });
@@ -102,7 +114,18 @@ router.post('/solicitudes/:id/prepare', authMiddleware, requireRole('admin'), as
     const updated = await (prisma as any).solicitud.update({ where: { id }, data: { status: foundLegajoIds.length > 0 ? 'APPROVED' : 'REJECTED', approvedAt: foundLegajoIds.length > 0 ? new Date() : undefined, rejectedAt: foundLegajoIds.length === 0 ? new Date() : undefined, notes, approvedFileIds: foundLegajoIds, blockedFileIds: blockedLegajoIds } });
     const full = await (prisma as any).solicitud.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
     res.json(full);
-    try { io?.emit('solicitud:updated', full); console.log('[socket] solicitud:updated', full.id); } catch {}
+    try { (global as any).io?.emit('solicitud:updated', full); debug('[socket] solicitud:updated', full.id); } catch {}
+    // Emit legajo updates (requested / blocked)
+    try {
+      const affected = [...foundLegajoIds, ...blockedLegajoIds];
+      if (affected.length) {
+        const legajos = await prisma.legajo.findMany({ where: { id: { in: affected } }, include: { currentHolder: true } });
+        for (const lg of legajos) {
+          (global as any).io?.emit('legajo:updated', lg);
+          debug('[socket] legajo:updated (prepare solicitud)', lg.id);
+        }
+      }
+    } catch (e) { logError('Emit legajo:updated (prepare solicitud) error', e); }
   } catch (e) { next(e); }
 });
 
@@ -125,8 +148,20 @@ router.post('/solicitudes/:id/confirm-receipt', authMiddleware, async (req: Auth
       await prisma.legajoHolderHistory.createMany({ data: approvedIds.map(id => ({ legajoId: id, usuarioId: req.userId as number })) });
     }
     const updated = await (prisma as any).solicitud.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() } });
-    res.json(updated);
-    try { io?.emit('solicitud:updated', updated); console.log('[socket] solicitud:updated', updated.id); } catch {}
+    // Recuperar objeto completo con legajos y usuario para evitar payload parcial en frontend
+    const fullUpdated = await (prisma as any).solicitud.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
+    res.json(fullUpdated);
+    try { (global as any).io?.emit('solicitud:updated', fullUpdated); debug('[socket] solicitud:updated', fullUpdated.id); } catch {}
+    // Emit legajo updates (on-loan)
+    try {
+      if (approvedIds.length) {
+        const legajos = await prisma.legajo.findMany({ where: { id: { in: approvedIds } }, include: { currentHolder: true } });
+        for (const lg of legajos) {
+          (global as any).io?.emit('legajo:updated', lg);
+          debug('[socket] legajo:updated (confirm receipt)', lg.id);
+        }
+      }
+    } catch (e) { logError('Emit legajo:updated (confirm receipt) error', e); }
   } catch (e) { next(e); }
 });
 
@@ -143,7 +178,15 @@ router.post('/devoluciones', authMiddleware, async (req: AuthRequest, res, next)
     await (prisma as any).devolucionLegajo.createMany({ data: legajoIds.map(id => ({ devolucionId: devolucion.id, legajoId: id })) });
     const full = await (prisma as any).devolucion.findUnique({ where: { id: devolucion.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
     res.status(201).json(full);
-    try { io?.emit('devolucion:created', full); console.log('[socket] devolucion:created', full.id); } catch {}
+    try { (global as any).io?.emit('devolucion:created', full); debug('[socket] devolucion:created', full.id); } catch {}
+    // Emit legajo updates (pending-return)
+    try {
+      const legajos = await prisma.legajo.findMany({ where: { id: { in: legajoIds } }, include: { currentHolder: true } });
+      for (const lg of legajos) {
+        (global as any).io?.emit('legajo:updated', lg);
+        debug('[socket] legajo:updated (iniciar devolucion)', lg.id);
+      }
+    } catch (e) { logError('Emit legajo:updated (iniciar devolucion) error', e); }
   } catch (e) { next(e); }
 });
 
@@ -170,27 +213,42 @@ router.post('/devoluciones/:id/confirm', authMiddleware, requireRole('admin'), a
   // Close history entries
   await prisma.legajoHolderHistory.updateMany({ where: { legajoId: { in: legajoIds }, endedAt: null }, data: { endedAt: new Date() } });
     const updated = await (prisma as any).devolucion.update({ where: { id }, data: { status: 'RETURNED', completedAt: new Date() } });
-    res.json(updated);
-    try { io?.emit('devolucion:updated', updated); console.log('[socket] devolucion:updated', updated.id); } catch {}
+    const fullUpdated = await (prisma as any).devolucion.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
+    res.json(fullUpdated);
+    try { (global as any).io?.emit('devolucion:updated', fullUpdated); debug('[socket] devolucion:updated', fullUpdated.id); } catch {}
+    // Emit legajo updates (available after return)
+    try {
+      const legajos = await prisma.legajo.findMany({ where: { id: { in: legajoIds } }, include: { currentHolder: true } });
+      for (const lg of legajos) {
+        (global as any).io?.emit('legajo:updated', lg);
+        debug('[socket] legajo:updated (confirm devolucion)', lg.id);
+      }
+    } catch (e) { logError('Emit legajo:updated (confirm devolucion) error', e); }
   } catch (e) { next(e); }
 });
 
 // Clear all workflow transactions (ADMIN)
+// Full destructive purge: deletes all workflow data AND legajos (admin only)
 router.post('/clear', authMiddleware, requireRole('admin'), async (req: AuthRequest, res, next) => {
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // Delete workflow linkage tables first (FK dependencies)
       const deletedSolicitudLegajos = await (tx as any).solicitudLegajo.deleteMany({});
       const deletedDevolucionLegajos = await (tx as any).devolucionLegajo.deleteMany({});
-  const deletedPrestamos = await (tx as any).prestamo.deleteMany({});
+      const deletedPrestamos = await (tx as any).prestamo.deleteMany({});
+      // Delete workflow roots
       const deletedSolicitudes = await (tx as any).solicitud.deleteMany({});
       const deletedDevoluciones = await (tx as any).devolucion.deleteMany({});
-    const resetLegajos = await (tx as any).legajo.updateMany({ where: { OR: [ { estado: 'requested' }, { estado: 'blocked' }, { estado: 'on-loan' }, { estado: 'pending-return' } ] }, data: { estado: 'available', currentHolderId: null } });
-    // Close all open holder history records
-    const closedHistory = await (tx as any).legajoHolderHistory.updateMany({ where: { endedAt: null }, data: { endedAt: new Date() } });
-      return { deletedSolicitudLegajos, deletedDevolucionLegajos, deletedPrestamos, deletedSolicitudes, deletedDevoluciones, resetLegajos, closedHistory };
+      // Delete holder & recovery histories and archivos before removing legajos
+      const deletedHolderHistory = await (tx as any).legajoHolderHistory.deleteMany({});
+      const deletedRecoveryHistory = await (tx as any).legajoRecoveryHistory.deleteMany({});
+      const deletedArchivos = await (tx as any).archivo.deleteMany({});
+      // Finally delete legajos themselves
+      const deletedLegajos = await (tx as any).legajo.deleteMany({});
+      return { deletedSolicitudLegajos, deletedDevolucionLegajos, deletedPrestamos, deletedSolicitudes, deletedDevoluciones, deletedHolderHistory, deletedRecoveryHistory, deletedArchivos, deletedLegajos };
     });
-    res.json({ ok: true, ...result });
-    try { io?.emit('workflow:cleared', { ok: true }); console.log('[socket] workflow:cleared'); } catch {}
+    res.json({ ok: true, purged: true, ...result });
+    try { (global as any).io?.emit('workflow:cleared', { ok: true, purged: true }); debug('[socket] workflow:cleared (purged)'); } catch {}
   } catch (e) { next(e); }
 });
 

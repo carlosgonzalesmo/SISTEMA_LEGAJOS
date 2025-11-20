@@ -1,6 +1,6 @@
 # Backend Legajos API
 
-Este backend provee una API REST para el frontend `applegajos`, reemplazando el almacenamiento KV/localStorage por PostgreSQL + Prisma.
+Backend oficial para el sistema de gestión de legajos (`applegajos`). Provee API REST + eventos en tiempo real (Socket.IO), auditorías de tenencia y recuperación, y un flujo completo de solicitudes / préstamos / devoluciones. Reemplaza el almacenamiento KV/localStorage por PostgreSQL + Prisma y añade trazabilidad.
 
 ## Stack
 - Node.js + Express + TypeScript
@@ -15,6 +15,21 @@ DATABASE_URL=postgresql://usuario:password@localhost:5432/legajosdb?schema=publi
 JWT_SECRET=cambia-esto-en-produccion
 CORS_ORIGIN=http://localhost:5000
 ```
+
+## Modelos principales (Prisma)
+
+| Modelo | Propósito | Notas |
+|--------|-----------|-------|
+| `Usuario` | Cuentas con rol (`admin`, `sysadmin`, `user`) y estado activo/inactivo | Relación con legajos creados y auditorías |
+| `Rol` | Tabla de roles (sembrada automáticamente) | `sysadmin` restringido del workflow operativo |
+| `Legajo` | Archivo físico con código normalizado (`L-0001`) y estado | Estados: `available`, `requested`, `on-loan`, `pending-return`, `blocked` |
+| `Solicitud` | Petición de uno o varios legajos | Estados: `PENDING`, `APPROVED`, `COMPLETED`, `REJECTED` |
+| `Prestamo` | Representa tenencia activa (derivado de confirmación de solicitud) | Status: `ACTIVE`, `PENDING_RETURN`, `RETURNED` |
+| `Devolucion` | Proceso de regreso de legajos | Estados: `PENDING_RETURN`, `RETURNED` |
+| `LegajoHolderHistory` | Auditoría de titular (inicio / fin) | Duración calculable en frontend |
+| `LegajoRecoveryHistory` | Auditoría de desbloqueos con motivo | Generado en `POST /legajos/:id/unlock` |
+
+Estados de `Legajo` se actualizan en cada transición del workflow y se emiten en tiempo real (`legajo:updated`).
 
 ## Endpoints principales
 
@@ -61,17 +76,52 @@ Respuesta signup/login:
 ### Legajos (protegido)
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | /api/legajos | Listar legajos |
+| GET | /api/legajos | Listar con filtros (estado, usuario, búsqueda, paginación) |
 | GET | /api/legajos/:id | Obtener legajo |
-| POST | /api/legajos | Crear legajo |
-| PUT | /api/legajos/:id | Actualizar legajo |
-| DELETE | /api/legajos/:id | Eliminar legajo |
+| GET | /api/legajos/by-codigo/:codigo | Buscar por código flexible (normaliza padding) |
+| POST | /api/legajos | Crear (normaliza código a 4 dígitos) |
+| PUT | /api/legajos/:id | Actualizar (impide cambio de código si está en préstamo) |
+| DELETE | /api/legajos/:id | Eliminar |
+| POST | /api/legajos/:id/unlock | Desbloquear (admin) y registrar motivo en auditoría |
+| GET | /api/legajos/:id/holder-history | Auditoría de titulares (admin) |
+| GET | /api/legajos/:id/recoveries | Auditoría de recuperaciones (admin) |
 
 ### Archivos (protegido)
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | /api/archivos | Subir/registrar archivo asociado a legajo |
+| POST | /api/archivos | Registrar archivo asociado a legajo |
 | DELETE | /api/archivos/:id | Eliminar archivo |
+
+### Workflow (solicitudes / devoluciones)
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | /api/workflow/solicitudes | Crear solicitud (user/admin) |
+| GET | /api/workflow/solicitudes | Listar solicitudes |
+| POST | /api/workflow/solicitudes/:id/prepare | Preparar (marca encontrados / bloqueados) (admin) |
+| POST | /api/workflow/solicitudes/:id/confirm-receipt | Confirmar recepción (user) -> genera tenencia |
+| POST | /api/workflow/devoluciones | Iniciar devolución (user/admin) |
+| GET | /api/workflow/devoluciones | Listar devoluciones |
+| POST | /api/workflow/devoluciones/:id/confirm | Confirmar devolución (admin) |
+| POST | /api/workflow/clear | Limpiar transacciones (admin) |
+
+Transiciones emiten eventos Socket.IO para sincronización en tiempo real.
+
+## Eventos en Tiempo Real (Socket.IO)
+
+| Evento | Payload | Disparador |
+|--------|---------|-----------|
+| `legajo:created` | Legajo | Creación |
+| `legajo:updated` | Legajo | Cualquier cambio de estado / edición / unlock |
+| `legajo:deleted` | `{ id }` | Eliminación |
+| `solicitud:created` | Solicitud | Creación solicitud |
+| `solicitud:updated` | Solicitud | Preparación / aprobación / recepción |
+| `devolucion:created` | Devolución | Inicio devolución |
+| `devolucion:updated` | Devolución | Confirmación devolución |
+| `workflow:cleared` | `{ ok: true }` | Limpieza administrativa |
+| `user:created` | Usuario | Creación usuario |
+| `user:updated` | Usuario | Cambios rol / habilitar / deshabilitar |
+
+El cliente renueva autenticación del socket si cambia el JWT.
 
 ## Uso rápido
 1. Iniciar PostgreSQL:
@@ -86,9 +136,9 @@ npx prisma generate
 ```bash
 npx ts-node src/seedRoles.ts
 ```
-3. Ejecutar servidor:
+4. Ejecutar servidor:
 ```bash
-npx ts-node src/index.ts
+npm run dev
 ```
 
 Nota: El servidor ahora asegura automáticamente la existencia de los roles base al iniciar (ver `ensureRoles.ts`). Si faltan, los crea mediante upsert, evitando errores `P2003` al registrar usuarios.
@@ -103,12 +153,19 @@ Access-Control-Allow-Headers: Content-Type, Authorization
 Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS,PATCH
 ```
 
+## Seguridad y Validaciones
+- Zod en entradas críticas (`unlock`, creación/edición legajo, preparación solicitud).
+- Restricción sysadmin en rutas operativas (middleware `denySysadmin`).
+- Protección último admin activo al modificar roles.
+- Motivo de desbloqueo obligatorio (2–500 caracteres) auditado.
+
 ## Próximas mejoras
-- Roles y permisos más granulares
-- Paginación y filtros
-- Refresh tokens
-- Logs estructurados y métricas
-- Tests automatizados (Jest/Supertest)
+- Permisos más granulares (por recurso y acción)
+- Paginación avanzada (cursor / filtros combinados)
+- Refresh tokens y rotación
+- Logs estructurados + métricas Prometheus
+- Exportación de auditorías (CSV / JSON)
+- Bulk update / acciones masivas
 
 ## Matriz de Acceso (Roles)
 
@@ -128,6 +185,9 @@ Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS,PATCH
 | Crear rol | ✗ | ✓ |
 | Audit Log | ✓ | ✗ |
 | Purge usuarios (/api/usuarios/purge) | ✗ | ✓ | ✗ |
+| Unlock legajo | ✓ (estado bloqueado) | ✗ | ✗ |
+| Ver auditoría titulares | ✓ | ✗ | ✗ |
+| Ver auditoría recuperaciones | ✓ | ✗ | ✗ |
 
 Reglas clave:
 1. Gestión de usuarios (listar, crear, cambio de rol, habilitar/deshabilitar) es exclusiva de sysadmin.
@@ -136,11 +196,17 @@ Reglas clave:
 4. Validaciones consistentes (Zod + mensajes traducibles).
 5. Purge masivo elimina workflow, legajos y usuarios; por defecto mantiene al sysadmin que lo ejecuta.
 
-## Frontend integración
-En el frontend reemplazar llamadas a KV por fetch a estos endpoints incluyendo el header:
+## Integración Frontend
+El frontend utiliza hooks (`useLegajos`, `useWorkflow`, `useAuth`) y suscripciones Socket.IO para mantener estado reactivo.
+
+Cada cambio relevante emite un evento y el cliente actualiza caches sin recargar toda la página.
+
+Header requerido en peticiones:
 ```
 Authorization: Bearer <token>
 ```
+
+Errores devuelven `{ error: <mensaje> }` normalizado para mostrar toasts.
 
 ## Recuperación de Credenciales / Usuario SysAdmin
 
@@ -158,7 +224,14 @@ Si las pruebas o un borrado accidental eliminaron usuarios y ahora ningún login
 
 Puedes cambiar las variables de entorno para definir correo y contraseña personalizados.
 
-Recomendación: Configura una base de datos separada para tests (ej. `DATABASE_URL_TEST`) y ajusta Jest para usarla, evitando limpiar datos de producción.
+Recomendación: Configura una base de datos separada para tests (`DATABASE_URL_TEST`) y ajusta Jest para aislar datos de producción.
+
+## Auditorías
+- Titulares: inicio/fin de cada período de préstamo; usado para calcular duración visible.
+- Recuperaciones: cada desbloqueo con usuario y motivo.
+
+## Tests
+Cobertura inicial con Jest/Supertest: auth, acceso, desbloqueo. Extender a workflow completo y edge cases de paginación.
 
 ## Licencia
 MIT

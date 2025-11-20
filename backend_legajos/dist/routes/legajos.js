@@ -4,6 +4,7 @@ const express_1 = require("express");
 const legajos_service_1 = require("../services/legajos.service");
 const io = global.io;
 const auth_1 = require("../middleware/auth");
+const logger_1 = require("../lib/logger");
 const zod_1 = require("zod");
 const prisma_1 = require("../prisma");
 const router = (0, express_1.Router)();
@@ -127,6 +128,7 @@ router.post('/', auth_1.authMiddleware, denySysadmin, async (req, res, next) => 
         res.status(201).json(created);
         try {
             global.io?.emit('legajo:created', created);
+            (0, logger_1.debug)('[socket] legajo:created', created.id);
         }
         catch { }
     }
@@ -171,6 +173,7 @@ router.put('/:id', auth_1.authMiddleware, denySysadmin, async (req, res, next) =
         res.json(updated);
         try {
             global.io?.emit('legajo:updated', updated);
+            (0, logger_1.debug)('[socket] legajo:updated', updated.id);
         }
         catch { }
     }
@@ -184,6 +187,7 @@ router.delete('/:id', auth_1.authMiddleware, denySysadmin, async (req, res, next
     res.status(204).send();
     try {
         global.io?.emit('legajo:deleted', { id });
+        (0, logger_1.debug)('[socket] legajo:deleted', id);
     }
     catch { }
 }

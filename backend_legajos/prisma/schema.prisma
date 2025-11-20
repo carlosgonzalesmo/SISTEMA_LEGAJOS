@@ -14,47 +14,50 @@ datasource db {
 }
 
 model Usuario {
-  id        Int      @id @default(autoincrement())
-  nombre    String
-  email     String   @unique
-  password  String
-  rolId     Int
-  rol       Rol      @relation(fields: [rolId], references: [id])
-  legajos   Legajo[]
-  holdingLegajos Legajo[] @relation("CurrentHolder")
-  solicitudes Solicitud[]
-  prestamos   Prestamo[]
-  devoluciones Devolucion[]
-  holderHistory LegajoHolderHistory[]
-  activo    Boolean  @default(true) // Soft delete / disable flag
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              Int                     @id @default(autoincrement())
+  nombre          String
+  email           String                  @unique
+  password        String
+  rolId           Int
+  rol             Rol                     @relation(fields: [rolId], references: [id])
+  legajos         Legajo[]
+  holdingLegajos  Legajo[]                @relation("CurrentHolder")
+  solicitudes     Solicitud[]
+  prestamos       Prestamo[]
+  devoluciones    Devolucion[]
+  holderHistory   LegajoHolderHistory[]
+  recoveryHistory LegajoRecoveryHistory[]
+  activo          Boolean                 @default(true) // Soft delete / disable flag
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
 }
 
 model Rol {
-  id        Int      @id @default(autoincrement())
-  nombre    String   @unique
-  usuarios  Usuario[]
+  id       Int       @id @default(autoincrement())
+  nombre   String    @unique
+  usuarios Usuario[]
 }
 
 model Legajo {
-  id          Int      @id @default(autoincrement())
-  codigo      String   @unique
-  titulo      String
-  descripcion String?
-  usuarioId   Int
-  usuario     Usuario  @relation(fields: [usuarioId], references: [id])
-  archivos    Archivo[]
-  estado      String
+  id              Int                     @id @default(autoincrement())
+  codigo          String                  @unique
+  titulo          String
+  descripcion     String?
+  dniCe           String?                 @unique // DNI (8 digits) or CE (12 digits) must be unique when present
+  usuarioId       Int
+  usuario         Usuario                 @relation(fields: [usuarioId], references: [id])
+  archivos        Archivo[]
+  estado          String
   currentHolderId Int?
-  currentHolder   Usuario? @relation("CurrentHolder", fields: [currentHolderId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  currentHolder   Usuario?                @relation("CurrentHolder", fields: [currentHolderId], references: [id])
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
   // Relaciones inversas para workflow
-  solicitudes SolicitudLegajo[] @relation("LegajoSolicitudes")
-  prestamos   Prestamo[]
-  devoluciones DevolucionLegajo[] @relation("LegajoDevoluciones")
-  holderHistory LegajoHolderHistory[]
+  solicitudes     SolicitudLegajo[]       @relation("LegajoSolicitudes")
+  prestamos       Prestamo[]
+  devoluciones    DevolucionLegajo[]      @relation("LegajoDevoluciones")
+  holderHistory   LegajoHolderHistory[]
+  recoveryHistory LegajoRecoveryHistory[]
 }
 
 model Archivo {
@@ -80,18 +83,18 @@ enum PrestamoStatus {
 }
 
 model Solicitud {
-  id            Int              @id @default(autoincrement())
-  usuarioId     Int
-  usuario       Usuario          @relation(fields: [usuarioId], references: [id])
-  status        SolicitudStatus  @default(PENDING)
-  createdAt     DateTime         @default(now())
-  approvedAt    DateTime?
-  completedAt   DateTime?
-  rejectedAt    DateTime?
-  notes         String?
-  legajos       SolicitudLegajo[] @relation("SolicitudLegajos")
-  approvedFileIds Int[] @default([])
-  blockedFileIds  Int[] @default([])
+  id              Int               @id @default(autoincrement())
+  usuarioId       Int
+  usuario         Usuario           @relation(fields: [usuarioId], references: [id])
+  status          SolicitudStatus   @default(PENDING)
+  createdAt       DateTime          @default(now())
+  approvedAt      DateTime?
+  completedAt     DateTime?
+  rejectedAt      DateTime?
+  notes           String?
+  legajos         SolicitudLegajo[] @relation("SolicitudLegajos")
+  approvedFileIds Int[]             @default([])
+  blockedFileIds  Int[]             @default([])
 }
 
 model SolicitudLegajo {
@@ -108,41 +111,51 @@ enum DevolucionStatus {
 }
 
 model Devolucion {
-  id          Int              @id @default(autoincrement())
+  id          Int                @id @default(autoincrement())
   usuarioId   Int
-  usuario     Usuario          @relation(fields: [usuarioId], references: [id])
-  status      DevolucionStatus @default(PENDING_RETURN)
-  createdAt   DateTime         @default(now())
+  usuario     Usuario            @relation(fields: [usuarioId], references: [id])
+  status      DevolucionStatus   @default(PENDING_RETURN)
+  createdAt   DateTime           @default(now())
   completedAt DateTime?
   legajos     DevolucionLegajo[] @relation("DevolucionLegajos")
 }
 
 model DevolucionLegajo {
-  id            Int        @id @default(autoincrement())
-  devolucionId  Int
-  devolucion    Devolucion @relation(fields: [devolucionId], references: [id], name: "DevolucionLegajos")
-  legajoId      Int
-  legajo        Legajo     @relation(fields: [legajoId], references: [id], name: "LegajoDevoluciones")
+  id           Int        @id @default(autoincrement())
+  devolucionId Int
+  devolucion   Devolucion @relation(fields: [devolucionId], references: [id], name: "DevolucionLegajos")
+  legajoId     Int
+  legajo       Legajo     @relation(fields: [legajoId], references: [id], name: "LegajoDevoluciones")
 }
 
 model Prestamo {
-  id           Int            @id @default(autoincrement())
-  usuarioId    Int
-  usuario      Usuario        @relation(fields: [usuarioId], references: [id])
-  legajoId     Int
-  legajo       Legajo         @relation(fields: [legajoId], references: [id])
-  status       PrestamoStatus @default(ACTIVE)
-  createdAt    DateTime       @default(now())
-  returnedAt   DateTime?
-  notes        String?
+  id         Int            @id @default(autoincrement())
+  usuarioId  Int
+  usuario    Usuario        @relation(fields: [usuarioId], references: [id])
+  legajoId   Int
+  legajo     Legajo         @relation(fields: [legajoId], references: [id])
+  status     PrestamoStatus @default(ACTIVE)
+  createdAt  DateTime       @default(now())
+  returnedAt DateTime?
+  notes      String?
 }
 
 model LegajoHolderHistory {
-  id         Int      @id @default(autoincrement())
-  legajoId   Int
-  legajo     Legajo   @relation(fields: [legajoId], references: [id])
-  usuarioId  Int
-  usuario    Usuario  @relation(fields: [usuarioId], references: [id])
-  startedAt  DateTime @default(now())
-  endedAt    DateTime?
+  id        Int       @id @default(autoincrement())
+  legajoId  Int
+  legajo    Legajo    @relation(fields: [legajoId], references: [id])
+  usuarioId Int
+  usuario   Usuario   @relation(fields: [usuarioId], references: [id])
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+}
+
+model LegajoRecoveryHistory {
+  id        Int      @id @default(autoincrement())
+  legajoId  Int
+  legajo    Legajo   @relation(fields: [legajoId], references: [id])
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+  reason    String
+  createdAt DateTime @default(now())
 }

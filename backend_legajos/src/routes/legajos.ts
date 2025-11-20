@@ -4,6 +4,8 @@ import { createSocketServer } from '../socket'; // to satisfy imports if needed
 import { Server } from 'socket.io';
 const io: Server | undefined = (global as any).io;
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { requireRole } from '../middleware/roles';
+import { debug } from '../lib/logger';
 import { z } from 'zod';
 import { prisma } from '../prisma';
 
@@ -32,7 +34,9 @@ router.get('/', authMiddleware, denySysadmin, async (req, res, next) => {
 		if (search) {
 			where.OR = [
 				{ codigo: { contains: search, mode: 'insensitive' } },
-				{ titulo: { contains: search, mode: 'insensitive' } }
+				{ titulo: { contains: search, mode: 'insensitive' } },
+				{ descripcion: { contains: search, mode: 'insensitive' } },
+				{ dniCe: { contains: search } }
 			];
 		}
 		const total = await LegajosService.count(where);
@@ -73,7 +77,8 @@ const createLegajoSchema = z.object({
 	codigo: z.string().min(3), // e.g. L-5 or L-0005
 	titulo: z.string().min(2), // nombre descriptivo
 	descripcion: z.string().optional(),
-	estado: z.string().min(2)
+	estado: z.string().min(2),
+	dniCe: z.string().optional() // DNI (8) o CE (12) dígitos
 });
 router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
 	try {
@@ -95,10 +100,24 @@ router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, nex
 		// Unicidad usando campo titulo (hasta migrar esquema con columna dedicada)
 		const exists = await prisma.legajo.findFirst({ where: { codigo: finalCodigo } });
 		if (exists) return res.status(409).json({ error: 'Código ya existe' });
-		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId };
+		let dniCeValue: string|undefined = undefined;
+		if (parsed.dniCe !== undefined) {
+			const raw = parsed.dniCe.trim();
+			if (raw.length > 0) {
+				if (!/^\d{8}$/.test(raw) && !/^\d{12}$/.test(raw)) {
+					return res.status(400).json({ error: 'dniCe inválido (debe tener 8 o 12 dígitos numéricos)' });
+				}
+				dniCeValue = raw;
+			}
+		}
+		if (dniCeValue) {
+			const dniExists = await prisma.legajo.findFirst({ where: { dniCe: dniCeValue } });
+			if (dniExists) return res.status(409).json({ error: 'dniCe ya existe' });
+		}
+		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId, dniCe: dniCeValue };
 		const created = await LegajosService.create(data);
 		res.status(201).json(created);
-		try { (global as any).io?.emit('legajo:created', created); console.log('[socket] legajo:created', created.id); } catch {}
+		try { (global as any).io?.emit('legajo:created', created); debug('[socket] legajo:created', created.id); } catch {}
 	} catch (e) { next(e); }
 });
 router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
@@ -127,11 +146,51 @@ router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, n
 		if (req.body.titulo !== undefined) updates.titulo = req.body.titulo;
 		if (req.body.descripcion !== undefined) updates.descripcion = req.body.descripcion;
 		if (req.body.estado !== undefined) updates.estado = req.body.estado;
+		if (req.body.dniCe !== undefined) {
+			const raw = String(req.body.dniCe).trim();
+			if (raw === '') {
+				updates.dniCe = null; // permitir limpiar
+			} else {
+				if (!/^\d{8}$/.test(raw) && !/^\d{12}$/.test(raw)) return res.status(400).json({ error: 'dniCe inválido (solo 8 o 12 dígitos numéricos)' });
+				// Verificar unicidad
+				const conflict = await prisma.legajo.findFirst({ where: { dniCe: raw, NOT: { id } } });
+				if (conflict) return res.status(409).json({ error: 'dniCe ya existe' });
+				updates.dniCe = raw;
+			}
+		}
 		const updated = await LegajosService.update(id, updates);
 		res.json(updated);
-		try { (global as any).io?.emit('legajo:updated', updated); console.log('[socket] legajo:updated', updated.id); } catch {}
+		try { (global as any).io?.emit('legajo:updated', updated); debug('[socket] legajo:updated', updated.id); } catch {}
 	} catch (e) { next(e); }
 });
-router.delete('/:id', authMiddleware, denySysadmin, async (req, res, next) => { try { const id = Number(req.params.id); await LegajosService.delete(id); res.status(204).send(); try { (global as any).io?.emit('legajo:deleted', { id }); console.log('[socket] legajo:deleted', id); } catch {} } catch (e) { next(e); } });
+router.delete('/:id', authMiddleware, denySysadmin, async (req, res, next) => { try { const id = Number(req.params.id); await LegajosService.delete(id); res.status(204).send(); try { (global as any).io?.emit('legajo:deleted', { id }); debug('[socket] legajo:deleted', id); } catch {} } catch (e) { next(e); } });
+
+// Desbloquear legajo bloqueado (admin) con motivo de recuperación
+const unlockSchema = z.object({ reason: z.string().min(2, 'Motivo muy corto').max(500, 'Motivo muy largo') });
+router.post('/:id/unlock', authMiddleware, requireRole('admin'), async (req: AuthRequest, res, next) => {
+	try {
+		const id = Number(req.params.id);
+		const parsed = unlockSchema.safeParse(req.body);
+		if (!parsed.success) {
+			return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Datos inválidos' });
+		}
+		const legajo = await prisma.legajo.findUnique({ where: { id } });
+		if (!legajo) return res.status(404).json({ error: 'Legajo no encontrado' });
+		if (legajo.estado !== 'blocked') return res.status(409).json({ error: 'El legajo no está bloqueado' });
+		const updated = await prisma.legajo.update({ where: { id }, data: { estado: 'available' } });
+		await prisma.legajoRecoveryHistory.create({ data: { legajoId: id, usuarioId: req.userId as number, reason: parsed.data.reason } });
+		res.json(updated);
+		try { (global as any).io?.emit('legajo:updated', updated); debug('[socket] legajo:updated (unlock)', updated.id); } catch {}
+	} catch (e) { next(e); }
+});
+
+// Listar historial de recuperaciones (admin)
+router.get('/:id/recoveries', authMiddleware, requireRole('admin'), async (req: AuthRequest, res, next) => {
+	try {
+		const id = Number(req.params.id);
+		const records = await prisma.legajoRecoveryHistory.findMany({ where: { legajoId: id }, orderBy: { createdAt: 'desc' }, include: { usuario: true } });
+		res.json(records.map(r => ({ id: r.id, legajoId: r.legajoId, usuarioId: r.usuarioId, usuarioNombre: r.usuario.nombre, reason: r.reason, createdAt: r.createdAt })));
+	} catch (e) { next(e); }
+});
 
 export default router;
