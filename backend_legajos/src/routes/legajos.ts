@@ -121,6 +121,10 @@ router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, nex
 		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId, dniCe: dniCeValue };
 		console.log('[LEGajos POST] objeto create data=', data);
 		const created = await LegajosService.create(data);
+		// Añadir headers de depuración para entorno remoto (Railway)
+		res.set('X-Debug-DniCe-In', String(parsed.dniCe));
+		res.set('X-Debug-DniCe-Value', String(dniCeValue));
+		res.set('X-Debug-DniCe-Saved', String(created.dniCe));
 		console.log('[LEGajos POST] creado dniCe=', created.dniCe);
 		res.status(201).json(created);
 		try { (global as any).io?.emit('legajo:created', created); debug('[socket] legajo:created', created.id); } catch {}
@@ -167,6 +171,9 @@ router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, n
 		}
 		console.log('[LEGajos PUT] updates finales=', updates);
 		const updated = await LegajosService.update(id, updates);
+		res.set('X-Debug-DniCe-In', String(req.body.dniCe));
+		res.set('X-Debug-DniCe-Saved', String(updated.dniCe));
+		res.set('X-Debug-DniCe-Updates', JSON.stringify(updates));
 		console.log('[LEGajos PUT] actualizado dniCe=', updated.dniCe);
 		res.json(updated);
 		try { (global as any).io?.emit('legajo:updated', updated); debug('[socket] legajo:updated', updated.id); } catch {}
