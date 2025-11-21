@@ -24,6 +24,11 @@ server.listen(PORT, async () => {
 		// El archivo seedAdmin.ts ejecuta main() al ser importado, recreando/actualizando el usuario sysadmin.
 		if (process.env.AUTO_SEED_ADMIN === 'true') {
 			console.log('AUTO_SEED_ADMIN=true detectado. Ejecutando seedAdmin...');
+			// Log detalle de credenciales usadas (solo correo y nombre; nunca la contraseña completa en producción)
+			const adminEmail = process.env.ADMIN_EMAIL || 'sysadmin@test.com';
+			const adminName = process.env.ADMIN_NAME || 'SysAdmin';
+			const adminPassPresent = !!process.env.ADMIN_PASSWORD;
+			console.log(`Seed sysadmin -> email=${adminEmail} nombre=${adminName} password_definida=${adminPassPresent}`);
 			try {
 				await import('./seedAdmin');
 				console.log('Seed admin/sysadmin completado (o actualizado).');
@@ -31,7 +36,7 @@ server.listen(PORT, async () => {
 				console.error('Error ejecutando seedAdmin:', seedErr);
 			}
 		} else {
-			console.log('AUTO_SEED_ADMIN no habilitado; omitiendo recreación automática de usuario sysadmin.');
+			console.log('AUTO_SEED_ADMIN no habilitado; omitiendo recreación automática de usuario sysadmin. (Establece AUTO_SEED_ADMIN=true para activar)');
 		}
 		// Validar que no existan legajos sin código (post-migración requerida)
 		const nullCodigoCount = await prisma.legajo.count({ where: { codigo: undefined as any } });
