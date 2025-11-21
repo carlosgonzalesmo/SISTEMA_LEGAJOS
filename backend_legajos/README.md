@@ -14,6 +14,10 @@ Backend oficial para el sistema de gestión de legajos (`applegajos`). Provee AP
 DATABASE_URL=postgresql://usuario:password@localhost:5432/legajosdb?schema=public
 JWT_SECRET=cambia-esto-en-produccion
 CORS_ORIGIN=http://localhost:5000
+ADMIN_EMAIL=sysadmin@test.com
+ADMIN_NAME=SysAdmin
+ADMIN_PASSWORD=sys123
+AUTO_SEED_ADMIN=false
 ```
 
 ## Modelos principales (Prisma)
@@ -225,6 +229,32 @@ Si las pruebas o un borrado accidental eliminaron usuarios y ahora ningún login
 Puedes cambiar las variables de entorno para definir correo y contraseña personalizados.
 
 Recomendación: Configura una base de datos separada para tests (`DATABASE_URL_TEST`) y ajusta Jest para aislar datos de producción.
+
+### Auto-seeding en arranque (opcional)
+Si defines `AUTO_SEED_ADMIN=true` en tu entorno al iniciar el backend, éste importará dinámicamente `seedAdmin.ts` y recreará (o actualizará) el usuario sysadmin con las credenciales provistas en `ADMIN_EMAIL`, `ADMIN_NAME` y `ADMIN_PASSWORD`.
+
+Logs esperados al arrancar con auto-seeding activo:
+```
+AUTO_SEED_ADMIN=true detectado. Ejecutando seedAdmin...
+Usuario creado: sysadmin@test.com (rol=sysadmin) id=...
+Seed admin/sysadmin completado (o actualizado).
+```
+
+Seguridad / buenas prácticas:
+- Activa `AUTO_SEED_ADMIN` solo para el primer despliegue o recuperación; luego ponlo en `false`.
+- Cambia la contraseña por defecto y almacénala en un gestor seguro.
+- Si `AUTO_SEED_ADMIN` permanece `true`, cualquier arranque volverá a sobrescribir la contraseña del usuario sysadmin con el valor de la variable de entorno.
+- En entornos CI/CD puedes usar el script independiente: `npm run seed:admin` (tras compilar usar `node dist/seedAdmin.js`).
+
+Scripts disponibles:
+```
+npm run seed:admin   # Desarrollo (ts-node-dev)
+```
+
+En producción (después de `npm run build`):
+```
+node dist/seedAdmin.js
+```
 
 ## Auditorías
 - Titulares: inicio/fin de cada período de préstamo; usado para calcular duración visible.

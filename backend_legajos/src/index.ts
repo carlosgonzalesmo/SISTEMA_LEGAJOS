@@ -20,6 +20,19 @@ server.listen(PORT, async () => {
 	try {
 		await ensureRoles();
 		console.log('Roles verificados/creados');
+		// Si se activa la bandera AUTO_SEED_ADMIN, importar dinámicamente el script de seed.
+		// El archivo seedAdmin.ts ejecuta main() al ser importado, recreando/actualizando el usuario sysadmin.
+		if (process.env.AUTO_SEED_ADMIN === 'true') {
+			console.log('AUTO_SEED_ADMIN=true detectado. Ejecutando seedAdmin...');
+			try {
+				await import('./seedAdmin');
+				console.log('Seed admin/sysadmin completado (o actualizado).');
+			} catch (seedErr) {
+				console.error('Error ejecutando seedAdmin:', seedErr);
+			}
+		} else {
+			console.log('AUTO_SEED_ADMIN no habilitado; omitiendo recreación automática de usuario sysadmin.');
+		}
 		// Validar que no existan legajos sin código (post-migración requerida)
 		const nullCodigoCount = await prisma.legajo.count({ where: { codigo: undefined as any } });
 		if (nullCodigoCount > 0) {

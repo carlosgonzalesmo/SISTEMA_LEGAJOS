@@ -6,6 +6,7 @@
     "dev": "ts-node-dev src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "seed:admin": "ts-node-dev src/seedAdmin.ts",
     "test": "jest"
   },
   "devDependencies": {
