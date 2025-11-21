@@ -82,10 +82,13 @@ const createLegajoSchema = z.object({
 });
 router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
 	try {
+		// Instrumentación para diagnosticar problema de dniCe en producción (Railway)
+		console.log('[LEGajos POST] body recibido=', req.body);
 		if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
 		const usuario = await prisma.usuario.findUnique({ where: { id: req.userId } });
 		if (!usuario || !usuario.activo) return res.status(400).json({ error: 'Usuario no válido' });
 		const parsed = createLegajoSchema.parse(req.body);
+		console.log('[LEGajos POST] parsed.dniCe=', parsed.dniCe);
 		// Validar formato: 1 letra, guion, número (sin o con padding). Ej: L-5, A-12, C-0007
 		const regex = /^[A-Z]-\d+$/;
 		if (!regex.test(parsed.codigo.toUpperCase())) {
@@ -110,18 +113,22 @@ router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, nex
 				dniCeValue = raw;
 			}
 		}
+		console.log('[LEGajos POST] dniCeValue provisional=', dniCeValue);
 		if (dniCeValue) {
 			const dniExists = await prisma.legajo.findFirst({ where: { dniCe: dniCeValue } });
 			if (dniExists) return res.status(409).json({ error: 'dniCe ya existe' });
 		}
 		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId, dniCe: dniCeValue };
+		console.log('[LEGajos POST] objeto create data=', data);
 		const created = await LegajosService.create(data);
+		console.log('[LEGajos POST] creado dniCe=', created.dniCe);
 		res.status(201).json(created);
 		try { (global as any).io?.emit('legajo:created', created); debug('[socket] legajo:created', created.id); } catch {}
 	} catch (e) { next(e); }
 });
 router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
 	try {
+		console.log('[LEGajos PUT] body recibido=', req.body);
 		const id = Number(req.params.id);
 		const existing = await prisma.legajo.findUnique({ where: { id } });
 		if (!existing) return res.status(404).json({ error: 'Legajo no encontrado' });
@@ -158,7 +165,9 @@ router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, n
 				updates.dniCe = raw;
 			}
 		}
+		console.log('[LEGajos PUT] updates finales=', updates);
 		const updated = await LegajosService.update(id, updates);
+		console.log('[LEGajos PUT] actualizado dniCe=', updated.dniCe);
 		res.json(updated);
 		try { (global as any).io?.emit('legajo:updated', updated); debug('[socket] legajo:updated', updated.id); } catch {}
 	} catch (e) { next(e); }
