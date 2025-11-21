@@ -158,7 +158,9 @@ Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS,PATCH
 ```
 
 ## Seguridad y Validaciones
-- Zod en entradas críticas (`unlock`, creación/edición legajo, preparación solicitud).
+- Zod en entradas críticas (`unlock`, creación/edición legajo, preparación solicitud) con refinamientos para `codigo` y `dniCe`.
+- Helper central `src/lib/legajo.ts` estandariza normalización (`L-5` vs `L-0005`) y validación de longitud de DNI/CE (8 ó 12 dígitos).
+- La creación de legajos persiste `dniCe` como `null` cuando se omite para respuestas consistentes.
 - Restricción sysadmin en rutas operativas (middleware `denySysadmin`).
 - Protección último admin activo al modificar roles.
 - Motivo de desbloqueo obligatorio (2–500 caracteres) auditado.
@@ -170,6 +172,7 @@ Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS,PATCH
 - Logs estructurados + métricas Prometheus
 - Exportación de auditorías (CSV / JSON)
 - Bulk update / acciones masivas
+- Hardening de CORS dinámico (lista blanca múltiple)
 
 ## Matriz de Acceso (Roles)
 

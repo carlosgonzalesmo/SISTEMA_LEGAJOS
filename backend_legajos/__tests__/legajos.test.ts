@@ -10,7 +10,12 @@ async function getAdminToken() {
     create: { nombre: 'admin' }
   });
   const email = 'legajotest_admin@example.com';
-  await prisma.usuario.deleteMany({ where: { email } });
+  // Cascading cleanup in case previous test run left data.
+  const existing = await prisma.usuario.findUnique({ where: { email } });
+  if (existing) {
+    await prisma.legajo.deleteMany({ where: { usuarioId: existing.id } });
+    await prisma.usuario.deleteMany({ where: { email } });
+  }
   const signup = await request(app).post('/api/auth/signup').send({
     nombre: 'Legajo Tester',
     email,

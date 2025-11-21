@@ -1,5 +1,6 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import { router as apiRouter } from './routes';
+import { errorHandler } from './middleware/errorHandler';
 
 export const app = express();
 
@@ -37,7 +38,5 @@ app.use((req: Request, res: Response) => {
   res.status(404).json({ error: 'Ruta no encontrada', path: req.originalUrl });
 });
 
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Error:', err);
-  res.status(err.status || 500).json({ error: err.message || 'Error interno' });
-});
+// Central error handler (Zod + generic)
+app.use(errorHandler);

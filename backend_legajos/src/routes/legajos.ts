@@ -1,13 +1,12 @@
 import { Router } from 'express';
 import { LegajosService } from '../services/legajos.service';
-import { createSocketServer } from '../socket'; // to satisfy imports if needed
-import { Server } from 'socket.io';
-const io: Server | undefined = (global as any).io;
+// Removed unused createSocketServer import. Socket instance accessed via global.io when available.
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { debug } from '../lib/logger';
 import { z } from 'zod';
 import { prisma } from '../prisma';
+import { normalizeCodigo, paddedCodigo, validateCodigo, validateDniCe } from '../lib/legajo';
 
 const router = Router();
 
@@ -62,97 +61,68 @@ router.get('/:id/holder-history', authMiddleware, async (req: AuthRequest, res, 
 // Lookup por código (normaliza padding)
 router.get('/by-codigo/:codigo', authMiddleware, denySysadmin, async (req, res, next) => {
 	try {
-		let raw = String(req.params.codigo).toUpperCase().trim();
-		const regex = /^([A-Z])-(\d+)$/;
-		const m = raw.match(regex);
-		if (!m) return res.status(400).json({ error: 'Formato inválido' });
-		const padded = `${m[1]}-${parseInt(m[2],10).toString().padStart(4,'0')}`;
-		const legajo = await prisma.legajo.findFirst({ where: { codigo: padded }, include: { usuario: true, archivos: true } });
+		const raw = String(req.params.codigo);
+		const validation = validateCodigo(raw);
+		if (!validation.valid) return res.status(400).json({ error: 'Formato inválido' });
+		const legajo = await prisma.legajo.findFirst({ where: { codigo: validation.padded }, include: { usuario: true, archivos: true } });
 		if (!legajo) return res.status(404).json({ error: 'No encontrado' });
 		res.json(legajo);
 	} catch (e) { next(e); }
 });
 // usuarioId ya no se acepta desde el body para evitar spoof. Se toma del token.
 const createLegajoSchema = z.object({
-	codigo: z.string().min(3), // e.g. L-5 or L-0005
-	titulo: z.string().min(2), // nombre descriptivo
+	codigo: z.string().min(3).refine(v => /^[A-Za-z]-\d+$/.test(v.trim()), 'Formato de código inválido'), // e.g. L-5 or L-0005
+	titulo: z.string().min(2),
 	descripcion: z.string().optional(),
 	estado: z.string().min(2),
-	dniCe: z.string().optional() // DNI (8) o CE (12) dígitos
+	dniCe: z.string().optional().refine(v => !v || v.trim() === '' || /^\d{8}$/.test(v.trim()) || /^\d{12}$/.test(v.trim()), 'dniCe inválido (8 o 12 dígitos)')
 });
 router.post('/', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
 	try {
-		// Instrumentación para diagnosticar problema de dniCe en producción (Railway)
-		console.log('[LEGajos POST] body recibido=', req.body);
 		if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
 		const usuario = await prisma.usuario.findUnique({ where: { id: req.userId } });
 		if (!usuario || !usuario.activo) return res.status(400).json({ error: 'Usuario no válido' });
 		const parsed = createLegajoSchema.parse(req.body);
-		console.log('[LEGajos POST] parsed.dniCe=', parsed.dniCe);
-		// Validar formato: 1 letra, guion, número (sin o con padding). Ej: L-5, A-12, C-0007
-		const regex = /^[A-Z]-\d+$/;
-		if (!regex.test(parsed.codigo.toUpperCase())) {
+		const codigoValidation = validateCodigo(parsed.codigo);
+		if (!codigoValidation.valid || !codigoValidation.padded) {
 			return res.status(400).json({ error: 'Formato de código inválido. Use Letra-Numero (ej. L-5 o L-0005)' });
 		}
-		const [letra, numeroStr] = parsed.codigo.toUpperCase().split('-');
-		const numero = parseInt(numeroStr, 10);
-		if (isNaN(numero) || numero < 0) return res.status(400).json({ error: 'Número inválido en código' });
-		// Normalizar a 4 dígitos para orden lexicográfico estable
-		const padded = numero.toString().padStart(4, '0');
-		const finalCodigo = `${letra}-${padded}`;
-		// Unicidad usando campo titulo (hasta migrar esquema con columna dedicada)
+		const finalCodigo = codigoValidation.padded;
 		const exists = await prisma.legajo.findFirst({ where: { codigo: finalCodigo } });
 		if (exists) return res.status(409).json({ error: 'Código ya existe' });
 		let dniCeValue: string|undefined = undefined;
 		if (parsed.dniCe !== undefined) {
-			const raw = parsed.dniCe.trim();
-			if (raw.length > 0) {
-				if (!/^\d{8}$/.test(raw) && !/^\d{12}$/.test(raw)) {
-					return res.status(400).json({ error: 'dniCe inválido (debe tener 8 o 12 dígitos numéricos)' });
-				}
-				dniCeValue = raw;
-			}
+			const dniValidation = validateDniCe(parsed.dniCe);
+			if (!dniValidation.valid) return res.status(400).json({ error: 'dniCe inválido (debe tener 8 o 12 dígitos numéricos)' });
+			const trimmed = parsed.dniCe.trim();
+			if (trimmed) dniCeValue = trimmed;
 		}
-		console.log('[LEGajos POST] dniCeValue provisional=', dniCeValue);
 		if (dniCeValue) {
 			const dniExists = await prisma.legajo.findFirst({ where: { dniCe: dniCeValue } });
 			if (dniExists) return res.status(409).json({ error: 'dniCe ya existe' });
 		}
-		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId, dniCe: dniCeValue };
-		console.log('[LEGajos POST] objeto create data=', data);
+		// Asegurar null explícito cuando no se provee dniCe para consistencia con tests
+		const data = { codigo: finalCodigo, titulo: parsed.titulo, descripcion: parsed.descripcion, estado: parsed.estado, usuarioId: req.userId, dniCe: dniCeValue ?? null };
 		const created = await LegajosService.create(data);
-		// Añadir headers de depuración para entorno remoto (Railway)
-		res.set('X-Debug-DniCe-In', String(parsed.dniCe));
-		res.set('X-Debug-DniCe-Value', String(dniCeValue));
-		res.set('X-Debug-DniCe-Saved', String(created.dniCe));
-		console.log('[LEGajos POST] creado dniCe=', created.dniCe);
 		res.status(201).json(created);
 		try { (global as any).io?.emit('legajo:created', created); debug('[socket] legajo:created', created.id); } catch {}
 	} catch (e) { next(e); }
 });
 router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, next) => {
 	try {
-		console.log('[LEGajos PUT] body recibido=', req.body);
 		const id = Number(req.params.id);
 		const existing = await prisma.legajo.findUnique({ where: { id } });
 		if (!existing) return res.status(404).json({ error: 'Legajo no encontrado' });
 		const updates: any = {};
 		if (req.body.codigo) {
-			// Bloquear cambio de código mientras está prestado (tiene currentHolder)
 			if (existing.currentHolderId) {
 				return res.status(409).json({ error: 'No se puede cambiar el código mientras el legajo está en préstamo' });
 			}
-			const codigoRaw = String(req.body.codigo).toUpperCase();
-			const regex = /^[A-Z]-\d+$/;
-			if (!regex.test(codigoRaw)) return res.status(400).json({ error: 'Formato de código inválido' });
-			const [letra, numeroStr] = codigoRaw.split('-');
-			const numero = parseInt(numeroStr, 10);
-			if (isNaN(numero) || numero < 0) return res.status(400).json({ error: 'Número inválido en código' });
-			const padded = numero.toString().padStart(4, '0');
-			const finalCodigo = `${letra}-${padded}`;
-			const exists = await prisma.legajo.findFirst({ where: { codigo: finalCodigo, NOT: { id } } });
+			const result = validateCodigo(String(req.body.codigo));
+			if (!result.valid || !result.padded) return res.status(400).json({ error: 'Formato de código inválido' });
+			const exists = await prisma.legajo.findFirst({ where: { codigo: result.padded, NOT: { id } } });
 			if (exists) return res.status(409).json({ error: 'Código ya existe' });
-			updates.codigo = finalCodigo;
+			updates.codigo = result.padded;
 		}
 		if (req.body.titulo !== undefined) updates.titulo = req.body.titulo;
 		if (req.body.descripcion !== undefined) updates.descripcion = req.body.descripcion;
@@ -160,21 +130,16 @@ router.put('/:id', authMiddleware, denySysadmin, async (req: AuthRequest, res, n
 		if (req.body.dniCe !== undefined) {
 			const raw = String(req.body.dniCe).trim();
 			if (raw === '') {
-				updates.dniCe = null; // permitir limpiar
+				updates.dniCe = null;
 			} else {
-				if (!/^\d{8}$/.test(raw) && !/^\d{12}$/.test(raw)) return res.status(400).json({ error: 'dniCe inválido (solo 8 o 12 dígitos numéricos)' });
-				// Verificar unicidad
+				const v = validateDniCe(raw);
+				if (!v.valid) return res.status(400).json({ error: 'dniCe inválido (solo 8 o 12 dígitos numéricos)' });
 				const conflict = await prisma.legajo.findFirst({ where: { dniCe: raw, NOT: { id } } });
 				if (conflict) return res.status(409).json({ error: 'dniCe ya existe' });
 				updates.dniCe = raw;
 			}
 		}
-		console.log('[LEGajos PUT] updates finales=', updates);
 		const updated = await LegajosService.update(id, updates);
-		res.set('X-Debug-DniCe-In', String(req.body.dniCe));
-		res.set('X-Debug-DniCe-Saved', String(updated.dniCe));
-		res.set('X-Debug-DniCe-Updates', JSON.stringify(updates));
-		console.log('[LEGajos PUT] actualizado dniCe=', updated.dniCe);
 		res.json(updated);
 		try { (global as any).io?.emit('legajo:updated', updated); debug('[socket] legajo:updated', updated.id); } catch {}
 	} catch (e) { next(e); }
