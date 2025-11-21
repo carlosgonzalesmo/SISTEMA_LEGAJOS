@@ -20,6 +20,16 @@ server.listen(PORT, async () => {
 	try {
 		await ensureRoles();
 		console.log('Roles verificados/creados');
+		const autoSeedFlag = process.env.AUTO_SEED_ADMIN;
+		console.log(`AUTO_SEED_ADMIN valor='${autoSeedFlag}'`);
+		// Comprobar existencia de sysadmin antes de decidir el seed.
+		const sysadminRole = await prisma.rol.findUnique({ where: { nombre: 'sysadmin' } });
+		let sysadminCount = 0;
+		if (sysadminRole) {
+			sysadminCount = await prisma.usuario.count({ where: { rolId: sysadminRole.id } });
+		}
+		console.log(`Usuarios sysadmin existentes: ${sysadminCount}`);
+
 		// Si se activa la bandera AUTO_SEED_ADMIN, importar dinámicamente el script de seed.
 		// El archivo seedAdmin.ts ejecuta main() al ser importado, recreando/actualizando el usuario sysadmin.
 		if (process.env.AUTO_SEED_ADMIN === 'true') {
@@ -36,7 +46,21 @@ server.listen(PORT, async () => {
 				console.error('Error ejecutando seedAdmin:', seedErr);
 			}
 		} else {
-			console.log('AUTO_SEED_ADMIN no habilitado; omitiendo recreación automática de usuario sysadmin. (Establece AUTO_SEED_ADMIN=true para activar)');
+			if (sysadminCount === 0) {
+				console.log('No existe ningún usuario sysadmin. Ejecutando seedAdmin por fallback (sin bandera).');
+				const adminEmail = process.env.ADMIN_EMAIL || 'sysadmin@test.com';
+				const adminName = process.env.ADMIN_NAME || 'SysAdmin';
+				const adminPassPresent = !!process.env.ADMIN_PASSWORD;
+				console.log(`Fallback seed sysadmin -> email=${adminEmail} nombre=${adminName} password_definida=${adminPassPresent}`);
+				try {
+					await import('./seedAdmin');
+					console.log('Fallback seed sysadmin completado.');
+				} catch (seedErr) {
+					console.error('Error en fallback seedAdmin:', seedErr);
+				}
+			} else {
+				console.log('AUTO_SEED_ADMIN no habilitado y ya existe sysadmin; no se ejecuta seed.');
+			}
 		}
 		// Validar que no existan legajos sin código (post-migración requerida)
 		const nullCodigoCount = await prisma.legajo.count({ where: { codigo: undefined as any } });

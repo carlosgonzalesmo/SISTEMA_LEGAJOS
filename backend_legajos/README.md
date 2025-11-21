@@ -233,6 +233,8 @@ Recomendación: Configura una base de datos separada para tests (`DATABASE_URL_T
 ### Auto-seeding en arranque (opcional)
 Si defines `AUTO_SEED_ADMIN=true` en tu entorno al iniciar el backend, éste importará dinámicamente `seedAdmin.ts` y recreará (o actualizará) el usuario sysadmin con las credenciales provistas en `ADMIN_EMAIL`, `ADMIN_NAME` y `ADMIN_PASSWORD`.
 
+Fallback automático: incluso si `AUTO_SEED_ADMIN` es `false`, el servidor comprobará si existe algún usuario con rol `sysadmin`. Si no encuentra ninguno, ejecutará el seed de forma automática (una sola vez) para garantizar que siempre puedas recuperar acceso administrativo. Esto evita quedarte bloqueado tras un purge o una base nueva sin necesidad de activar la bandera.
+
 Logs esperados al arrancar con auto-seeding activo:
 ```
 AUTO_SEED_ADMIN=true detectado. Ejecutando seedAdmin...
@@ -242,6 +244,7 @@ Seed admin/sysadmin completado (o actualizado).
 
 Seguridad / buenas prácticas:
 - Activa `AUTO_SEED_ADMIN` solo para el primer despliegue o recuperación; luego ponlo en `false`.
+- Si lo dejas en `false` y ya existe un sysadmin, no se ejecuta seed; si no existe, se hace seed por fallback.
 - Cambia la contraseña por defecto y almacénala en un gestor seguro.
 - Si `AUTO_SEED_ADMIN` permanece `true`, cualquier arranque volverá a sobrescribir la contraseña del usuario sysadmin con el valor de la variable de entorno.
 - En entornos CI/CD puedes usar el script independiente: `npm run seed:admin` (tras compilar usar `node dist/seedAdmin.js`).
