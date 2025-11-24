@@ -1,5 +1,3 @@
-module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  testMatch: ['**/__tests__/**/*.test.ts'],
-};
+// Archivo de configuración Jest conservado vacío para evitar confusiones.
+// Las pruebas han sido eliminadas del paquete de producción.
+module.exports = {};

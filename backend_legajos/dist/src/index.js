@@ -37,77 +37,51 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // Carga variables de entorno desde .env (DATABASE_URL, JWT_SECRET, etc.)
-require("dotenv/config");
 const app_1 = require("./app");
-const ensureRoles_1 = require("./ensureRoles");
-const prisma_1 = require("./prisma");
 const http_1 = __importDefault(require("http"));
 const socket_1 = require("./socket");
-const PORT = process.env.PORT || 3001;
+const ensureRoles_1 = require("./ensureRoles");
+const prisma_1 = require("./prisma");
+const config_1 = require("./config");
 const server = http_1.default.createServer(app_1.app);
 const io = (0, socket_1.createSocketServer)(server);
-// Exponer instancia global para emisiones desde rutas (legajos, workflow, usuarios)
-global.io = io;
-server.listen(PORT, async () => {
-    console.log(`Servidor backend + Socket.IO escuchando en puerto ${PORT}`);
-    if (!process.env.DATABASE_URL) {
-        console.warn('ADVERTENCIA: DATABASE_URL no está definido. Asegúrate de tener .env cargado.');
+global.io = io; // Socket.IO global broadcasting
+async function seedSysadminIfNeeded() {
+    const sysadminRole = await prisma_1.prisma.rol.findUnique({ where: { nombre: 'sysadmin' } });
+    let sysadminCount = 0;
+    if (sysadminRole) {
+        sysadminCount = await prisma_1.prisma.usuario.count({ where: { rolId: sysadminRole.id } });
     }
+    if (config_1.config.AUTO_SEED_ADMIN) {
+        console.log('[startup] AUTO_SEED_ADMIN=true -> ejecutando seedAdmin');
+        await Promise.resolve().then(() => __importStar(require('./seedAdmin')));
+        return;
+    }
+    if (sysadminCount === 0) {
+        console.log('[startup] No existe usuario sysadmin -> seed fallback');
+        await Promise.resolve().then(() => __importStar(require('./seedAdmin')));
+    }
+    else {
+        console.log('[startup] Sysadmin existente -> no se ejecuta seed');
+    }
+}
+async function start() {
+    console.log(`[startup] Iniciando servidor en puerto ${config_1.config.PORT}`);
     try {
+        (0, config_1.logConfigSummary)();
         await (0, ensureRoles_1.ensureRoles)();
-        console.log('Roles verificados/creados');
-        const autoSeedFlag = process.env.AUTO_SEED_ADMIN;
-        console.log(`AUTO_SEED_ADMIN valor='${autoSeedFlag}'`);
-        // Comprobar existencia de sysadmin antes de decidir el seed.
-        const sysadminRole = await prisma_1.prisma.rol.findUnique({ where: { nombre: 'sysadmin' } });
-        let sysadminCount = 0;
-        if (sysadminRole) {
-            sysadminCount = await prisma_1.prisma.usuario.count({ where: { rolId: sysadminRole.id } });
-        }
-        console.log(`Usuarios sysadmin existentes: ${sysadminCount}`);
-        // Si se activa la bandera AUTO_SEED_ADMIN, importar dinámicamente el script de seed.
-        // El archivo seedAdmin.ts ejecuta main() al ser importado, recreando/actualizando el usuario sysadmin.
-        if (process.env.AUTO_SEED_ADMIN === 'true') {
-            console.log('AUTO_SEED_ADMIN=true detectado. Ejecutando seedAdmin...');
-            // Log detalle de credenciales usadas (solo correo y nombre; nunca la contraseña completa en producción)
-            const adminEmail = process.env.ADMIN_EMAIL || 'sysadmin@test.com';
-            const adminName = process.env.ADMIN_NAME || 'SysAdmin';
-            const adminPassPresent = !!process.env.ADMIN_PASSWORD;
-            console.log(`Seed sysadmin -> email=${adminEmail} nombre=${adminName} password_definida=${adminPassPresent}`);
-            try {
-                await Promise.resolve().then(() => __importStar(require('./seedAdmin')));
-                console.log('Seed admin/sysadmin completado (o actualizado).');
-            }
-            catch (seedErr) {
-                console.error('Error ejecutando seedAdmin:', seedErr);
-            }
-        }
-        else {
-            if (sysadminCount === 0) {
-                console.log('No existe ningún usuario sysadmin. Ejecutando seedAdmin por fallback (sin bandera).');
-                const adminEmail = process.env.ADMIN_EMAIL || 'sysadmin@test.com';
-                const adminName = process.env.ADMIN_NAME || 'SysAdmin';
-                const adminPassPresent = !!process.env.ADMIN_PASSWORD;
-                console.log(`Fallback seed sysadmin -> email=${adminEmail} nombre=${adminName} password_definida=${adminPassPresent}`);
-                try {
-                    await Promise.resolve().then(() => __importStar(require('./seedAdmin')));
-                    console.log('Fallback seed sysadmin completado.');
-                }
-                catch (seedErr) {
-                    console.error('Error en fallback seedAdmin:', seedErr);
-                }
-            }
-            else {
-                console.log('AUTO_SEED_ADMIN no habilitado y ya existe sysadmin; no se ejecuta seed.');
-            }
-        }
-        // Validar que no existan legajos sin código (post-migración requerida)
+        console.log('[startup] Roles verificados');
+        await seedSysadminIfNeeded();
         const nullCodigoCount = await prisma_1.prisma.legajo.count({ where: { codigo: undefined } });
         if (nullCodigoCount > 0) {
-            console.error(`ERROR: Existen ${nullCodigoCount} legajos sin código tras migración requerida. Complete los códigos antes de continuar.`);
+            console.error(`[startup] ALERTA: Existen ${nullCodigoCount} legajos sin código tras migración. Corregir antes de operar.`);
         }
     }
     catch (e) {
-        console.error('Error asegurando roles base:', e);
+        console.error('[startup] Error en fase inicial:', e);
     }
-});
+    server.listen(config_1.config.PORT, () => {
+        console.log(`[startup] Servidor backend listo (puerto ${config_1.config.PORT})`);
+    });
+}
+start();

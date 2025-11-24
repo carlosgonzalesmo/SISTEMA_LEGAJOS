@@ -5,12 +5,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const prisma_1 = require("./prisma");
-// Script para recrear usuario admin (y opcional sysadmin) si faltan.
-// Usa credenciales conocidas o variables de entorno.
-// Ahora el usuario semilla principal será un sysadmin (rol con capacidad de gestionar usuarios y roles)
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'sysadmin@test.com';
-const ADMIN_NAME = process.env.ADMIN_NAME || 'SysAdmin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'sys123';
+const config_1 = require("./config");
+// Script de seed para garantizar existencia de un usuario sysadmin.
+// Buenas prácticas:
+//  - Requiere variables ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD definidas (mínimo 8 chars)
+//  - No usar contraseñas por defecto en producción.
+//  - Idempotente: si existe actualiza nombre, rol y password (rehash) y marca activo.
+const ADMIN_EMAIL = config_1.config.ADMIN_EMAIL;
+const ADMIN_NAME = config_1.config.ADMIN_NAME;
+const ADMIN_PASSWORD = config_1.config.ADMIN_PASSWORD;
 async function ensureRole(nombre) {
     return prisma_1.prisma.rol.upsert({ where: { nombre }, update: {}, create: { nombre } });
 }
@@ -32,12 +35,19 @@ async function ensureUser(email, nombre, password, rolNombre) {
     }
 }
 async function main() {
-    console.log('Recreando roles base...');
+    try {
+        (0, config_1.validateSeedCredentials)();
+    }
+    catch (e) {
+        console.error('[seedAdmin] Error de validación de credenciales:', e.message);
+        process.exit(1);
+    }
+    console.log('[seedAdmin] Creando/verificando roles base...');
     await ensureRole('admin');
     await ensureRole('user');
     await ensureRole('sysadmin');
-    console.log('Asegurando usuario sysadmin...');
+    console.log('[seedAdmin] Asegurando usuario sysadmin...');
     await ensureUser(ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD, 'sysadmin');
-    console.log('Listo.');
+    console.log('[seedAdmin] Seed completado.');
 }
-main().catch(e => { console.error(e); process.exit(1); }).finally(async () => { await prisma_1.prisma.$disconnect(); });
+main().catch(e => { console.error('[seedAdmin] Error no controlado:', e); process.exit(1); }).finally(async () => { await prisma_1.prisma.$disconnect(); });

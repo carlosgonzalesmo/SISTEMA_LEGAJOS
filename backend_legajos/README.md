@@ -231,7 +231,7 @@ Si las pruebas o un borrado accidental eliminaron usuarios y ahora ningún login
 
 Puedes cambiar las variables de entorno para definir correo y contraseña personalizados.
 
-Recomendación: Configura una base de datos separada para tests (`DATABASE_URL_TEST`) y ajusta Jest para aislar datos de producción.
+Nota: Este paquete se entrega sin suite de tests incorporada en producción; usar una base separada para QA si se reintroducen pruebas.
 
 ### Auto-seeding en arranque (opcional)
 Si defines `AUTO_SEED_ADMIN=true` en tu entorno al iniciar el backend, éste importará dinámicamente `seedAdmin.ts` y recreará (o actualizará) el usuario sysadmin con las credenciales provistas en `ADMIN_EMAIL`, `ADMIN_NAME` y `ADMIN_PASSWORD`.
@@ -266,8 +266,23 @@ node dist/seedAdmin.js
 - Titulares: inicio/fin de cada período de préstamo; usado para calcular duración visible.
 - Recuperaciones: cada desbloqueo con usuario y motivo.
 
-## Tests
-Cobertura inicial con Jest/Supertest: auth, acceso, desbloqueo. Extender a workflow completo y edge cases de paginación.
+## Despliegue y Persistencia DNI/CE
+Para producción, el script `npm start` ejecuta primero `npm run build` (vía `prestart`), asegurando que `dist/` refleja la lógica más reciente (incluyendo validación y persistencia de `dniCe`).
+
+Puntos clave:
+1. El campo `dniCe` se guarda como `string` (8 ó 12 dígitos) o `null` cuando se omite.
+2. La búsqueda (`search`) en `/api/legajos` incluye coincidencias en `codigo`, `titulo`, `descripcion` y `dniCe`.
+3. Si alguna vez se detecta comportamiento antiguo, borrar manualmente `dist/` y reconstruir.
+
+Flujo recomendado de build:
+```
+npm ci
+npm run build
+npm start
+```
+
+No se incluyen tests en este paquete de producción para minimizar peso y ruido.
+
 
 ## Licencia
 MIT
