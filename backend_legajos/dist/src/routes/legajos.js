@@ -85,7 +85,7 @@ router.get('/by-codigo/:codigo', auth_1.authMiddleware, denySysadmin, async (req
         const validation = (0, legajo_1.validateCodigo)(raw);
         if (!validation.valid)
             return res.status(400).json({ error: 'Formato inválido' });
-        const legajo = await prisma_1.prisma.legajo.findFirst({ where: { codigo: validation.padded }, include: { usuario: true, archivos: true } });
+        const legajo = await prisma_1.prisma.legajo.findFirst({ where: { codigo: validation.padded }, include: { usuario: true, archivos: true, currentHolder: true } });
         if (!legajo)
             return res.status(404).json({ error: 'No encontrado' });
         res.json(legajo);

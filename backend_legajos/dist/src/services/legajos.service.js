@@ -9,5 +9,5 @@ exports.LegajosService = {
     update: (id, data) => prisma_1.prisma.legajo.update({ where: { id }, data }),
     delete: (id) => prisma_1.prisma.legajo.delete({ where: { id } }),
     count: (where) => prisma_1.prisma.legajo.count({ where }),
-    listPaged: (where, page, pageSize) => prisma_1.prisma.legajo.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, include: { usuario: true, archivos: true }, orderBy: { id: 'desc' } })
+    listPaged: (where, page, pageSize) => prisma_1.prisma.legajo.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, include: { usuario: true, archivos: true, currentHolder: true }, orderBy: { id: 'desc' } })
 };

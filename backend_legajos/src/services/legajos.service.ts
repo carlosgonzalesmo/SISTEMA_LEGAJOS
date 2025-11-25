@@ -8,5 +8,5 @@ export const LegajosService = {
   delete: (id: number) => prisma.legajo.delete({ where: { id } }),
   count: (where: any) => prisma.legajo.count({ where }),
   listPaged: (where: any, page: number, pageSize: number) =>
-    prisma.legajo.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, include: { usuario: true, archivos: true }, orderBy: { id: 'desc' } })
+    prisma.legajo.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, include: { usuario: true, archivos: true, currentHolder: true }, orderBy: { id: 'desc' } })
 };
