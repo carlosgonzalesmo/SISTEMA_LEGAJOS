@@ -47,6 +47,22 @@ router.post('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) 
     if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
     if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
     const { legajoIds } = createSolicitudSchema.parse(req.body);
+    // Validación anticipada de límite de préstamos: cantidad actual en préstamo + solicitados
+    try {
+      const setting = await (prisma as any).systemSetting.findUnique({ where: { key: 'max_loans_per_user' } });
+      if (setting) {
+        const maxLoans = Number(setting.value);
+        if (!Number.isNaN(maxLoans) && maxLoans > 0) {
+          const currentOnLoanCount = await prisma.legajo.count({ where: { estado: { in: ['on-loan','pending-return'] }, currentHolderId: req.userId } });
+          const projected = currentOnLoanCount + legajoIds.length;
+            if (projected > maxLoans) {
+              return res.status(409).json({ error: `Supera el máximo de préstamos permitidos (${maxLoans}). Actualmente tiene ${currentOnLoanCount} en préstamo y está intentando solicitar ${legajoIds.length}.` });
+            }
+        }
+      }
+    } catch (policyErr) {
+      debug('Policy read error (solicitud create)', policyErr);
+    }
     // Use transaction to avoid race conditions when multiple users request same legajo
     let affectedLegajoIds: number[] = [];
     const solicitudId = await prisma.$transaction(async (tx) => {
@@ -99,11 +115,27 @@ router.post('/solicitudes/:id/prepare', authMiddleware, requireRole('admin'), as
   try {
     const id = Number(req.params.id);
     const { foundLegajoIds, blockedLegajoIds, notes } = prepareSolicitudSchema.parse(req.body);
-    const solicitud = await (prisma as any).solicitud.findUnique({ where: { id }, include: { legajos: true } });
+    const solicitud = await (prisma as any).solicitud.findUnique({ where: { id }, include: { legajos: true, usuario: true } });
     if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
     const allIds = solicitud.legajos.map((sl: any) => sl.legajoId);
     if (![...foundLegajoIds, ...blockedLegajoIds].every(lid => allIds.includes(lid))) {
       return res.status(400).json({ error: 'IDs no pertenecen a la solicitud' });
+    }
+    // Validación de límite antes de aprobar: préstamos actuales (incl. pending-return) del usuario + a aprobar
+    try {
+      const setting = await (prisma as any).systemSetting.findUnique({ where: { key: 'max_loans_per_user' } });
+      if (setting) {
+        const maxLoans = Number(setting.value);
+        if (!Number.isNaN(maxLoans) && maxLoans > 0) {
+          const currentCount = await prisma.legajo.count({ where: { estado: { in: ['on-loan','pending-return'] }, currentHolderId: solicitud.usuarioId } });
+          const projected = currentCount + (foundLegajoIds?.length || 0);
+          if (projected > maxLoans) {
+            return res.status(409).json({ error: `El usuario excederá el máximo permitido (${maxLoans}). Actualmente tiene ${currentCount} y se intenta aprobar ${foundLegajoIds.length}. La solicitud permanece pendiente.` });
+          }
+        }
+      }
+    } catch (policyErr) {
+      debug('Policy read error (prepare solicitud)', policyErr);
     }
     if (foundLegajoIds.length) {
       await prisma.legajo.updateMany({ where: { id: { in: foundLegajoIds } }, data: { estado: 'requested' } });
@@ -142,6 +174,23 @@ router.post('/solicitudes/:id/confirm-receipt', authMiddleware, async (req: Auth
     // Only process approvedFileIds, not blocked ones.
     const approvedIds: number[] = (solicitud.approvedFileIds || []);
     if (approvedIds.length === 0) return res.status(400).json({ error: 'No hay legajos aprobados para confirmar recepción' });
+    // Enforce max loans per user policy, if configured
+    try {
+      const setting = await (prisma as any).systemSetting.findUnique({ where: { key: 'max_loans_per_user' } });
+      if (setting) {
+        const maxLoans = Number(setting.value);
+        if (!Number.isNaN(maxLoans) && maxLoans > 0) {
+          const currentOnLoanCount = await prisma.legajo.count({ where: { estado: { in: ['on-loan','pending-return'] }, currentHolderId: req.userId } });
+          const projected = currentOnLoanCount + approvedIds.length;
+          if (projected > maxLoans) {
+            return res.status(409).json({ error: `Supera el máximo de préstamos permitidos (${maxLoans}). Actualmente tiene ${currentOnLoanCount} en préstamo y está intentando confirmar ${approvedIds.length}.` });
+          }
+        }
+      }
+    } catch (policyErr) {
+      // Do not block on policy read errors; log and continue
+      debug('Policy read error', policyErr);
+    }
     await prisma.legajo.updateMany({ where: { id: { in: approvedIds } }, data: { estado: 'on-loan', currentHolderId: req.userId } });
     // History entries
     if (approvedIds.length) {

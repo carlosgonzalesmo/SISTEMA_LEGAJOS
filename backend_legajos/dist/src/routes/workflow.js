@@ -171,6 +171,24 @@ router.post('/solicitudes/:id/confirm-receipt', auth_1.authMiddleware, async (re
         const approvedIds = (solicitud.approvedFileIds || []);
         if (approvedIds.length === 0)
             return res.status(400).json({ error: 'No hay legajos aprobados para confirmar recepción' });
+        // Enforce max loans per user policy, if configured
+        try {
+            const setting = await prisma_1.prisma.systemSetting.findUnique({ where: { key: 'max_loans_per_user' } });
+            if (setting) {
+                const maxLoans = Number(setting.value);
+                if (!Number.isNaN(maxLoans) && maxLoans > 0) {
+                    const currentOnLoanCount = await prisma_1.prisma.legajo.count({ where: { estado: 'on-loan', currentHolderId: req.userId } });
+                    const projected = currentOnLoanCount + approvedIds.length;
+                    if (projected > maxLoans) {
+                        return res.status(409).json({ error: `Supera el máximo de préstamos permitidos (${maxLoans}). Actualmente tiene ${currentOnLoanCount} en préstamo y está intentando confirmar ${approvedIds.length}.` });
+                    }
+                }
+            }
+        }
+        catch (policyErr) {
+            // Do not block on policy read errors; log and continue
+            (0, logger_1.debug)('Policy read error', policyErr);
+        }
         await prisma_1.prisma.legajo.updateMany({ where: { id: { in: approvedIds } }, data: { estado: 'on-loan', currentHolderId: req.userId } });
         // History entries
         if (approvedIds.length) {

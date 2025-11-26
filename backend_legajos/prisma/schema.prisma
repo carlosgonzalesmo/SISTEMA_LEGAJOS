@@ -159,3 +159,12 @@ model LegajoRecoveryHistory {
   reason    String
   createdAt DateTime @default(now())
 }
+
+// System-wide settings key-value store
+model SystemSetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
