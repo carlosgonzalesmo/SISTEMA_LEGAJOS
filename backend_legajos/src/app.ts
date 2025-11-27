@@ -21,16 +21,7 @@ app.get('/', (_req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'Backend Legajos API' });
 });
 
-// Spark runtime compatibility stubs
-app.get('/_spark/user', (_req: Request, res: Response) => {
-  // Return minimal anonymous user info; frontend will ignore if not needed
-  res.json({ anonymous: true });
-});
-
-app.post('/_spark/loaded', (req: Request, res: Response) => {
-  // Accept telemetry payload silently
-  res.status(200).json({ ok: true });
-});
+// Removed Spark telemetry endpoints (/_spark/user, /_spark/loaded)
 
 app.use('/api', apiRouter);
 

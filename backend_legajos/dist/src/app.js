@@ -23,15 +23,7 @@ exports.app.use(express_1.default.json());
 exports.app.get('/', (_req, res) => {
     res.json({ status: 'ok', service: 'Backend Legajos API' });
 });
-// Spark runtime compatibility stubs
-exports.app.get('/_spark/user', (_req, res) => {
-    // Return minimal anonymous user info; frontend will ignore if not needed
-    res.json({ anonymous: true });
-});
-exports.app.post('/_spark/loaded', (req, res) => {
-    // Accept telemetry payload silently
-    res.status(200).json({ ok: true });
-});
+// Removed Spark telemetry endpoints (/_spark/user, /_spark/loaded)
 exports.app.use('/api', routes_1.router);
 exports.app.use((req, res) => {
     res.status(404).json({ error: 'Ruta no encontrada', path: req.originalUrl });
