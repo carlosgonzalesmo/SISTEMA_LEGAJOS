@@ -37,6 +37,34 @@ Estados de `Legajo` se actualizan en cada transición del workflow y se emiten e
 
 ## Endpoints principales
 
+### Arquitectura de Rutas (Nueva Agrupación)
+Para facilitar la separación de responsabilidades entre operaciones diarias y gobernanza del sistema, se introducen prefijos jerárquicos:
+
+| Prefijo | Dominio | Contenido | Acceso Global |
+|---------|---------|-----------|---------------|
+| `/admin` | Operacional | Legajos, archivos, workflow (solicitudes/devoluciones) | Abierto a `admin` y `user` (sysadmin bloqueado internamente) |
+| `/sysadmin` | Gobernanza | Usuarios, roles, settings | Restringido a `sysadmin` |
+
+Detalles:
+1. Las rutas legacy (/usuarios, /roles, /legajos, /archivos, /workflow, /settings) siguen expuestas para compatibilidad durante la transición del frontend.
+2. `/sysadmin/settings` exige rol `sysadmin`; `/settings` permite lectura por otros roles (p.ej. el límite de préstamos) mientras se actualiza el consumo desde el frontend.
+3. No se aplica un guard global en `/admin` para preservar la capacidad del usuario estándar de crear solicitudes y gestionar sus devoluciones; los controles finos (e.g. `requireRole('admin')`, `denySysadmin`) permanecen dentro de cada sub‑router.
+4. Eventualmente se podrá retirar el montaje legacy y forzar el consumo exclusivamente bajo los prefijos nuevos tras una fase de deprecación.
+
+Tabla de ejemplo de migración (legacy -> nuevo):
+
+| Legacy | Nuevo sugerido |
+|--------|----------------|
+| `/legajos` | `/admin/legajos` |
+| `/archivos` | `/admin/archivos` |
+| `/workflow/solicitudes` | `/admin/workflow/solicitudes` |
+| `/workflow/devoluciones` | `/admin/workflow/devoluciones` |
+| `/usuarios` | `/sysadmin/usuarios` |
+| `/roles` | `/sysadmin/roles` |
+| `/settings` (lectura) | `/sysadmin/settings` (lectura/escritura) |
+
+Fase actual: coexistencia. El frontend puede comenzar a consumir los nuevos prefijos sin romper integraciones existentes.
+
 ### Auth
 | Método | Ruta | Descripción |
 |--------|------|-------------|
