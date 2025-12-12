@@ -1,14 +1,29 @@
 {
   "compilerOptions": {
+    /* Output */
     "target": "ES2020",
     "module": "commonjs",
     "outDir": "dist",
-    "rootDir": "./",
+    "rootDir": "src",
+
+    /* Quality */
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node", "jest"]
+
+    /* Node */
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "types": ["node", "jest"],
+
+    /* Improve build speed */
+    "incremental": false,
+    "noEmitOnError": true,
+
+    /* Cleaner build */
+    "forceConsistentCasingInFileNames": true
   },
+
   "include": ["src"],
-  "exclude": ["dist", "__tests__"]
+  "exclude": ["dist", "node_modules", "__tests__"]
 }
