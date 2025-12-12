@@ -38,11 +38,84 @@ export function normalizeDniCe(raw?: string | null): string | null {
   return null;
 }
 
+type ImportColumnIndexes = {
+  fileNumber: number | string;
+  dniCe: number | string;
+  apellidos: number | string;
+  nombres: number | string;
+  nameOrder?: 'apellidos_nombres' | 'nombres_apellidos';
+  nameSeparator?: string;
+};
+
+function letterToIndex(letterOrIndex: string | number): number {
+  if (typeof letterOrIndex === 'number') return Math.max(0, letterOrIndex | 0);
+  const s = String(letterOrIndex).trim();
+  // If it's a numeric string, parse it
+  if (/^\d+$/.test(s)) return Math.max(0, parseInt(s, 10));
+  // Convert Excel-like column letters (A,B,...,Z, AA, AB, ...) to 0-based index
+  const up = s.toUpperCase();
+  let idx = 0;
+  for (let i = 0; i < up.length; i++) {
+    const c = up.charCodeAt(i);
+    if (c < 65 || c > 90) continue; // ignore non-letters
+    idx = idx * 26 + (c - 64); // A=1 ... Z=26
+  }
+  return Math.max(0, idx - 1);
+}
+
+async function getImportColumnIndexes(): Promise<Required<ImportColumnIndexes>> {
+  // Default mapping matches current behavior:
+  // A: fileNumber, B: dniCe, C: apellidos, D: nombres
+  const defaults: Required<ImportColumnIndexes> = {
+    fileNumber: 0,
+    dniCe: 1,
+    apellidos: 2,
+    nombres: 3,
+    nameOrder: 'apellidos_nombres',
+    nameSeparator: ' ',
+  };
+
+  // Try SystemSetting first
+  try {
+    const setting = await prisma.systemSetting.findUnique({ where: { key: 'import_column_indexes' } });
+    if (setting?.value) {
+      try {
+        const parsed: ImportColumnIndexes = JSON.parse(setting.value);
+        return {
+          fileNumber: letterToIndex(parsed.fileNumber ?? defaults.fileNumber),
+          dniCe: letterToIndex(parsed.dniCe ?? defaults.dniCe),
+          apellidos: letterToIndex(parsed.apellidos ?? defaults.apellidos),
+          nombres: letterToIndex(parsed.nombres ?? defaults.nombres),
+          nameOrder: (parsed.nameOrder ?? defaults.nameOrder) as 'apellidos_nombres' | 'nombres_apellidos',
+          nameSeparator: parsed.nameSeparator ?? defaults.nameSeparator,
+        };
+      } catch { /* ignore parse error */ }
+    }
+  } catch { /* ignore db error */ }
+
+  // Then try env var
+  try {
+    const fromEnv = getEnv('IMPORT_COLUMN_INDEXES', false);
+    if (fromEnv) {
+      const parsed: ImportColumnIndexes = JSON.parse(fromEnv);
+      return {
+        fileNumber: letterToIndex(parsed.fileNumber ?? defaults.fileNumber),
+        dniCe: letterToIndex(parsed.dniCe ?? defaults.dniCe),
+        apellidos: letterToIndex(parsed.apellidos ?? defaults.apellidos),
+        nombres: letterToIndex(parsed.nombres ?? defaults.nombres),
+        nameOrder: (parsed.nameOrder ?? defaults.nameOrder) as 'apellidos_nombres' | 'nombres_apellidos',
+        nameSeparator: parsed.nameSeparator ?? defaults.nameSeparator,
+      };
+    }
+  } catch { /* ignore env parse error */ }
+
+  return defaults;
+}
+
 export async function fetchSheetRows(maxRows?: number, offset?: number): Promise<ImportRow[]> {
   const base64 = getEnv('GOOGLE_SHEETS_CREDENTIALS_BASE64');
   const sheetId = getEnv('GOOGLE_SHEETS_ID');
   const range = getEnv('GOOGLE_SHEETS_RANGE');
-
   const json = Buffer.from(base64!, 'base64').toString('utf-8');
   const creds = JSON.parse(json);
   const auth = new JWT({
@@ -55,17 +128,29 @@ export async function fetchSheetRows(maxRows?: number, offset?: number): Promise
   let values = (resp.data.values || []) as string[][];
   const startIndex = Math.max(0, Number(offset || 0));
   const upper = typeof maxRows === 'number' ? startIndex + Math.max(0, maxRows) : values.length;
-  // Expected columns based on user's sheet:
-  // [fileNumber, dniCe, apellidos, nombres]
-  // Map to our internal shape: codigo=fileNumber, dniCe=second col, nombre="apellidos nombres", descripcion=null
+  // Resolve index-based mapping (no headers assumption)
+  const map = await getImportColumnIndexes();
+  console.log('Import column mapping:', map);
+  const idxFile = letterToIndex(map.fileNumber);
+  const idxDni = letterToIndex(map.dniCe);
+  const idxApe = letterToIndex(map.apellidos);
+  const idxNom = letterToIndex(map.nombres);
+
+  // Map to our internal shape: codigo=fileNumber, dniCe, nombre built from apellidos/nombres, descripcion=null
   const rows: ImportRow[] = [];
   for (let i = startIndex; i < Math.min(values.length, upper); i++) {
     const row = values[i] || [];
-    const fileNumber = row[0] ?? '';
-    const dniCe = row[1] ?? null;
-    const apellidos = (row[2] ?? '').trim();
-    const nombres = (row[3] ?? '').trim();
-    const nombre = `${apellidos}${apellidos && nombres ? ' ' : ''}${nombres}`.trim();
+    const fileNumber = (row[idxFile] ?? '').toString();
+    const dniCe = row[idxDni] != null ? String(row[idxDni]) : null;
+    const apellidos = String(row[idxApe] ?? '').trim();
+    const nombres = String(row[idxNom] ?? '').trim();
+    let nombre = '';
+    if (map.nameOrder === 'nombres_apellidos') {
+      nombre = `${nombres}${nombres && apellidos ? map.nameSeparator : ''}${apellidos}`.trim();
+    } else {
+      // default: apellidos_nombres
+      nombre = `${apellidos}${apellidos && nombres ? map.nameSeparator : ''}${nombres}`.trim();
+    }
     rows.push({
       codigo: fileNumber,
       nombre,
