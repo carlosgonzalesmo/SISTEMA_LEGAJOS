@@ -4,8 +4,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "ts-node-dev src/index.ts",
-    "build": "tsc",
-    "prestart": "npm run build",
+    "build": "tsc --noEmit false",
+    "prestart": "tsc --noEmit",
     "start": "node dist/src/index.js",
     "seed:admin": "ts-node-dev src/seedAdmin.ts",
     "test": "jest",
