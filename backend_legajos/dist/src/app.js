@@ -7,6 +7,7 @@ exports.app = void 0;
 const express_1 = __importDefault(require("express"));
 const routes_1 = require("./routes");
 const errorHandler_1 = require("./middleware/errorHandler");
+const prisma_1 = require("./prisma");
 exports.app = (0, express_1.default)();
 // CORS configuration (manual to ensure headers with Express 5)
 const allowedOrigin = process.env.CORS_ORIGIN || 'http://localhost:5000';
@@ -20,6 +21,8 @@ exports.app.use((req, res, next) => {
     next();
 });
 exports.app.use(express_1.default.json());
+// Expose Prisma client on app for routers that require it (e.g., import preview)
+exports.app.set('prisma', prisma_1.prisma);
 exports.app.get('/', (_req, res) => {
     res.json({ status: 'ok', service: 'Backend Legajos API' });
 });

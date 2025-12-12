@@ -7,7 +7,7 @@ const express_1 = require("express");
 const legajos_1 = __importDefault(require("./legajos"));
 const archivos_1 = __importDefault(require("./archivos"));
 const workflow_1 = __importDefault(require("./workflow"));
-const dashboard_1 = __importDefault(require("./dashboard"));
+const import_1 = require("./import");
 // Agrupa rutas operativas (dominio "operacional")
 // Se mantiene sin middleware de rol global para que usuarios (role=user) puedan
 // seguir creando solicitudes y devoluciones vía /admin/workflow/*.
@@ -18,5 +18,5 @@ const adminRouter = (0, express_1.Router)();
 adminRouter.use('/legajos', legajos_1.default);
 adminRouter.use('/archivos', archivos_1.default);
 adminRouter.use('/workflow', workflow_1.default);
-adminRouter.use('/dashboard', dashboard_1.default);
+adminRouter.use('/import', import_1.importRouter);
 exports.default = adminRouter;

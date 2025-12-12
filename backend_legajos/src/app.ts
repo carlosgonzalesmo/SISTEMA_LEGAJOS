@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { router as apiRouter } from './routes';
 import { errorHandler } from './middleware/errorHandler';
+import { prisma } from './prisma';
 
 export const app = express();
 
@@ -16,6 +17,9 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Expose Prisma client on app for routers that require it (e.g., import preview)
+app.set('prisma', prisma);
 
 app.get('/', (_req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'Backend Legajos API' });
