@@ -1,0 +1,3 @@
+[submodule "applegajos"]
+	path = applegajos
+	url = https://github.com/carlosgonzalesmo/applegajos.git
