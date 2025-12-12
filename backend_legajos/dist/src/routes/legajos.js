@@ -72,7 +72,7 @@ router.get('/:id/holder-history', auth_1.authMiddleware, async (req, res, next) 
             return res.status(403).json({ error: 'No autorizado' });
         const legajoId = Number(req.params.id);
         const history = await prisma_1.prisma.legajoHolderHistory.findMany({ where: { legajoId }, orderBy: { startedAt: 'desc' }, include: { usuario: true } });
-        res.json(history.map(h => ({ id: h.id, legajoId: h.legajoId, usuarioId: h.usuarioId, usuarioNombre: h.usuario.nombre, startedAt: h.startedAt, endedAt: h.endedAt })));
+        res.json(history.map((h) => ({ id: h.id, legajoId: h.legajoId, usuarioId: h.usuarioId, usuarioNombre: h.usuario.nombre, startedAt: h.startedAt, endedAt: h.endedAt })));
     }
     catch (e) {
         next(e);
@@ -243,7 +243,7 @@ router.get('/:id/recoveries', auth_1.authMiddleware, (0, roles_1.requireRole)('a
     try {
         const id = Number(req.params.id);
         const records = await prisma_1.prisma.legajoRecoveryHistory.findMany({ where: { legajoId: id }, orderBy: { createdAt: 'desc' }, include: { usuario: true } });
-        res.json(records.map(r => ({ id: r.id, legajoId: r.legajoId, usuarioId: r.usuarioId, usuarioNombre: r.usuario.nombre, reason: r.reason, createdAt: r.createdAt })));
+        res.json(records.map((r) => ({ id: r.id, legajoId: r.legajoId, usuarioId: r.usuarioId, usuarioNombre: r.usuario.nombre, reason: r.reason, createdAt: r.createdAt })));
     }
     catch (e) {
         next(e);

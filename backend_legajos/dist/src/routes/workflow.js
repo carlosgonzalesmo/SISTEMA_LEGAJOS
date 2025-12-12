@@ -69,7 +69,7 @@ router.post('/solicitudes', auth_1.authMiddleware, async (req, res, next) => {
             if (legajos.length !== legajoIds.length)
                 throw new Error('Algunos legajos no existen');
             // Validate availability: allow 'available' or legacy 'activo'
-            const notAvailable = legajos.filter(l => !['available', 'activo'].includes(l.estado));
+            const notAvailable = legajos.filter((l) => !['available', 'activo'].includes(l.estado));
             if (notAvailable.length > 0)
                 throw new Error('Uno o más legajos no están disponibles');
             const solicitud = await tx.solicitud.create({ data: { usuarioId: req.userId, approvedFileIds: [], blockedFileIds: [] } });

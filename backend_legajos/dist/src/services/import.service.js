@@ -104,8 +104,8 @@ async function runImport(adminUserId, indices, opts) {
     }
     // Preload existing codes and dni
     const existing = await prisma_1.prisma.legajo.findMany({ select: { codigo: true, dniCe: true } });
-    const codes = new Set(existing.map(e => e.codigo));
-    const dnis = new Set(existing.map(e => e.dniCe).filter(Boolean));
+    const codes = new Set(existing.map((e) => e.codigo));
+    const dnis = new Set(existing.map((e) => e.dniCe).filter(Boolean));
     const summary = { processedCount: rows.length, insertedCount: 0, skippedCount: 0, skipped: [] };
     for (let i = 0; i < rows.length; i++) {
         const r = rows[i];

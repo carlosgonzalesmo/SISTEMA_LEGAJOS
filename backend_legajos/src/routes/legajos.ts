@@ -55,7 +55,7 @@ router.get('/:id/holder-history', authMiddleware, async (req: AuthRequest, res, 
 		if (rol?.nombre?.toLowerCase() !== 'admin') return res.status(403).json({ error: 'No autorizado' });
 		const legajoId = Number(req.params.id);
 		const history = await prisma.legajoHolderHistory.findMany({ where: { legajoId }, orderBy: { startedAt: 'desc' }, include: { usuario: true } });
-		res.json(history.map(h => ({ id: h.id, legajoId: h.legajoId, usuarioId: h.usuarioId, usuarioNombre: h.usuario.nombre, startedAt: h.startedAt, endedAt: h.endedAt })));
+		res.json(history.map((h: any) => ({ id: h.id, legajoId: h.legajoId, usuarioId: h.usuarioId, usuarioNombre: h.usuario.nombre, startedAt: h.startedAt, endedAt: h.endedAt })));
 	} catch (e) { next(e); }
 });
 // Lookup por código (normaliza padding)
@@ -170,7 +170,7 @@ router.get('/:id/recoveries', authMiddleware, requireRole('admin'), async (req: 
 	try {
 		const id = Number(req.params.id);
 		const records = await prisma.legajoRecoveryHistory.findMany({ where: { legajoId: id }, orderBy: { createdAt: 'desc' }, include: { usuario: true } });
-		res.json(records.map(r => ({ id: r.id, legajoId: r.legajoId, usuarioId: r.usuarioId, usuarioNombre: r.usuario.nombre, reason: r.reason, createdAt: r.createdAt })));
+		res.json(records.map((r: any) => ({ id: r.id, legajoId: r.legajoId, usuarioId: r.usuarioId, usuarioNombre: r.usuario.nombre, reason: r.reason, createdAt: r.createdAt })));
 	} catch (e) { next(e); }
 });
 

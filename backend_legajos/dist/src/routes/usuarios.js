@@ -186,7 +186,7 @@ router.post('/purge', auth_1.authMiddleware, (0, roles_1.requireRole)('sysadmin'
         const targetUsers = await prisma_1.prisma.usuario.findMany({ where: includeSelf ? {} : { NOT: { id: req.userId } } });
         if (targetUsers.length === 0)
             return res.json({ deleted: 0, includeSelf });
-        const ids = targetUsers.map(u => u.id);
+        const ids = targetUsers.map((u) => u.id);
         await prisma_1.prisma.$transaction([
             // Eliminar workflow relacionado primero (solicitudes, devoluciones, prestamos) y sus tablas puente
             prisma_1.prisma.solicitudLegajo.deleteMany({ where: { solicitud: { usuarioId: { in: ids } } } }),

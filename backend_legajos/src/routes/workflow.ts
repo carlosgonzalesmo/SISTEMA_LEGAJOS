@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { prisma } from '../prisma';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { debug, error as logError } from '../lib/logger';
 
@@ -65,11 +66,11 @@ router.post('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) 
     }
     // Use transaction to avoid race conditions when multiple users request same legajo
     let affectedLegajoIds: number[] = [];
-    const solicitudId = await prisma.$transaction(async (tx) => {
+    const solicitudId = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const legajos = await tx.legajo.findMany({ where: { id: { in: legajoIds } } });
       if (legajos.length !== legajoIds.length) throw new Error('Algunos legajos no existen');
       // Validate availability: allow 'available' or legacy 'activo'
-      const notAvailable = legajos.filter(l => !['available', 'activo'].includes(l.estado));
+      const notAvailable = legajos.filter((l: any) => !['available', 'activo'].includes(l.estado));
       if (notAvailable.length > 0) throw new Error('Uno o más legajos no están disponibles');
       const solicitud = await (tx as any).solicitud.create({ data: { usuarioId: req.userId, approvedFileIds: [], blockedFileIds: [] } });
       await (tx as any).solicitudLegajo.createMany({ data: legajoIds.map(id => ({ solicitudId: solicitud.id, legajoId: id })) });
@@ -280,7 +281,7 @@ router.post('/devoluciones/:id/confirm', authMiddleware, requireRole('admin'), a
 // Full destructive purge: deletes all workflow data AND legajos (admin only)
 router.post('/clear', authMiddleware, requireRole('admin'), async (req: AuthRequest, res, next) => {
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Delete workflow linkage tables first (FK dependencies)
       const deletedSolicitudLegajos = await (tx as any).solicitudLegajo.deleteMany({});
       const deletedDevolucionLegajos = await (tx as any).devolucionLegajo.deleteMany({});
