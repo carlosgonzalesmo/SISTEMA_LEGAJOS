@@ -12,6 +12,7 @@ const archivos_1 = __importDefault(require("./archivos"));
 const auth_1 = __importDefault(require("./auth"));
 const workflow_1 = __importDefault(require("./workflow"));
 const settings_1 = __importDefault(require("./settings"));
+const importExcel_1 = __importDefault(require("./importExcel"));
 // New grouped routers (architectural separation)
 const admin_1 = __importDefault(require("./admin"));
 const sysadmin_1 = __importDefault(require("./sysadmin"));
@@ -24,6 +25,7 @@ exports.router.use('/archivos', archivos_1.default);
 exports.router.use('/auth', auth_1.default);
 exports.router.use('/workflow', workflow_1.default);
 exports.router.use('/settings', settings_1.default);
+exports.router.use('/import', importExcel_1.default);
 // New hierarchical architecture (phase 1):
 // /admin -> operational domain (legajos CRUD, archivos, workflow lifecycle)
 // /sysadmin -> governance domain (usuarios, roles, system settings)

@@ -38,7 +38,7 @@ export function normalizeDniCe(raw?: string | null): string | null {
   return null;
 }
 
-type ImportColumnIndexes = {
+export type ImportColumnIndexes = {
   fileNumber: number | string;
   dniCe: number | string;
   apellidos: number | string;
@@ -47,7 +47,7 @@ type ImportColumnIndexes = {
   nameSeparator?: string;
 };
 
-function letterToIndex(letterOrIndex: string | number): number {
+export function letterToIndex(letterOrIndex: string | number): number {
   if (typeof letterOrIndex === 'number') return Math.max(0, letterOrIndex | 0);
   const s = String(letterOrIndex).trim();
   // If it's a numeric string, parse it
@@ -63,7 +63,7 @@ function letterToIndex(letterOrIndex: string | number): number {
   return Math.max(0, idx - 1);
 }
 
-async function getImportColumnIndexes(): Promise<Required<ImportColumnIndexes>> {
+export async function getImportColumnIndexes(): Promise<Required<ImportColumnIndexes>> {
   // Default mapping matches current behavior:
   // A: fileNumber, B: dniCe, C: apellidos, D: nombres
   const defaults: Required<ImportColumnIndexes> = {

@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeCodigo = normalizeCodigo;
 exports.normalizeDniCe = normalizeDniCe;
+exports.letterToIndex = letterToIndex;
+exports.getImportColumnIndexes = getImportColumnIndexes;
 exports.fetchSheetRows = fetchSheetRows;
 exports.runImport = runImport;
 exports.runPreview = runPreview;
@@ -122,6 +124,7 @@ async function fetchSheetRows(maxRows, offset) {
     const upper = typeof maxRows === 'number' ? startIndex + Math.max(0, maxRows) : values.length;
     // Resolve index-based mapping (no headers assumption)
     const map = await getImportColumnIndexes();
+    console.log('Import column mapping:', map);
     const idxFile = letterToIndex(map.fileNumber);
     const idxDni = letterToIndex(map.dniCe);
     const idxApe = letterToIndex(map.apellidos);
