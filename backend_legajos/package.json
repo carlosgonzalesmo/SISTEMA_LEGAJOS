@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "ts-node-dev src/index.ts",
     "build": "tsc --noEmit false",
-    "prestart": "npm run build",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "seed:admin": "ts-node-dev src/seedAdmin.ts",
     "test": "jest",
     "test:watch": "jest --watch"
