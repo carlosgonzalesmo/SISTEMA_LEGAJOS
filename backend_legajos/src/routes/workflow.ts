@@ -111,6 +111,32 @@ router.get('/solicitudes', authMiddleware, async (req: AuthRequest, res, next) =
   } catch (e) { next(e); }
 });
 
+// Lightweight mapping of requested legajos to requester name (visible to all non-sysadmin)
+router.get('/requested-map', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
+    // Find solicitudes that are still relevant for requested legajos
+    const sols = await (prisma as any).solicitud.findMany({
+      where: { status: { in: ['PENDING', 'APPROVED'] } },
+      orderBy: { id: 'desc' },
+      include: { legajos: { include: { legajo: true } }, usuario: true }
+    });
+    const map: Record<number, string> = {};
+    for (const s of sols) {
+      const userLabel = (s.usuario?.nombre || s.usuario?.email || 'Usuario') as string;
+      for (const sl of s.legajos) {
+        // Only consider legajos currently in requested state
+        if (sl.legajo?.estado === 'requested' && map[sl.legajoId] === undefined) {
+          map[sl.legajoId] = userLabel;
+        }
+      }
+    }
+    const arr = Object.entries(map).map(([legajoId, usuarioNombre]) => ({ legajoId: Number(legajoId), usuarioNombre }));
+    res.json(arr);
+  } catch (e) { next(e); }
+});
+
 // Prepare (approve or block some legajos) - ADMIN
 router.post('/solicitudes/:id/prepare', authMiddleware, requireRole('admin'), async (req: AuthRequest, res, next) => {
   try {

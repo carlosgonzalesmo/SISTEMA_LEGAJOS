@@ -93,7 +93,14 @@ router.post('/upload', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'),
         const sheetIndex = Number(process.env.IMPORT_SHEET_INDEX || '0');
         const values = sheetToValues(req.file.buffer, sheetIndex);
         const limit = Number(process.env.IMPORT_ROW_LIMIT || '5000');
-        const rows = await mapValuesToImportRows(values, 0, limit);
+        let lastRowIndex = 0;
+        try {
+            const s = await prisma_1.prisma.systemSetting.findUnique({ where: { key: 'import_last_row_index' } });
+            if (s?.value)
+                lastRowIndex = Math.max(0, Number(s.value));
+        }
+        catch { }
+        const rows = await mapValuesToImportRows(values, lastRowIndex, limit);
         const preview = await (0, import_service_1.runPreview)(prisma_1.prisma, rows, { page: 1, pageSize: rows.length, onlyNew: false });
         res.json({ ok: true, summary: preview.summary });
     }
@@ -104,23 +111,37 @@ router.post('/upload', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'),
 // Commit Excel import (same mapping)
 router.post('/commit', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'), upload.single('file'), async (req, res, next) => {
     try {
+        const indicesParam = (req.body?.indices ?? req.query?.indices);
+        const selectedIndices = Array.isArray(indicesParam)
+            ? indicesParam.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+            : typeof indicesParam === 'string'
+                ? indicesParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n))
+                : [];
         if (!req.file)
             return res.status(400).json({ error: 'Archivo .xlsx requerido' });
         const sheetIndex = Number(process.env.IMPORT_SHEET_INDEX || '0');
         const values = sheetToValues(req.file.buffer, sheetIndex);
         const limit = Number(process.env.IMPORT_ROW_LIMIT || '5000');
-        const rows = await mapValuesToImportRows(values, 0, limit);
+        let lastRowIndex = 0;
+        try {
+            const s = await prisma_1.prisma.systemSetting.findUnique({ where: { key: 'import_last_row_index' } });
+            if (s?.value)
+                lastRowIndex = Math.max(0, Number(s.value));
+        }
+        catch { }
+        const rows = await mapValuesToImportRows(values, lastRowIndex, limit);
         // Use current user as admin actor
         const adminUserId = req.userId;
-        const summary = await (0, import_service_1.runImport)(adminUserId, undefined, { onlyNew: false, force: true });
-        // Note: runImport fetches from Google Sheets by default; to insert our rows, we could create a dedicated insert path.
-        // For simplicity, re-run the preview, filter candidates, and insert manually here:
         const preview = await (0, import_service_1.runPreview)(prisma_1.prisma, rows, { page: 1, pageSize: rows.length, onlyNew: false });
-        const candidates = preview.summary?.candidates || [];
+        let candidates = preview.summary?.candidates;
+        if (selectedIndices.length > 0) {
+            const set = new Set(selectedIndices);
+            candidates = candidates.filter(r => set.has(r.index));
+        }
+        // Inserción manual respetando candidatos seleccionados
         let inserted = 0;
         const codes = new Set();
         const dnis = new Set();
-        // preload existing
         const existing = await prisma_1.prisma.legajo.findMany({ select: { codigo: true, dniCe: true } });
         existing.forEach((e) => { if (e.codigo)
             codes.add(e.codigo); if (e.dniCe)
@@ -129,6 +150,10 @@ router.post('/commit', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'),
             const codigo = c.codigo;
             const nombre = c.nombre;
             const dniCe = c.dniCe || null;
+            if (!codigo || !nombre)
+                continue;
+            if (codes.has(codigo) || (dniCe && dnis.has(dniCe)))
+                continue;
             try {
                 await prisma_1.prisma.legajo.create({ data: { codigo, titulo: nombre, descripcion: null, dniCe, estado: 'available', usuarioId: adminUserId } });
                 inserted += 1;
@@ -138,7 +163,20 @@ router.post('/commit', auth_1.authMiddleware, (0, roles_1.requireRole)('admin'),
             }
             catch { /* skip on conflict */ }
         }
-        res.json({ ok: true, inserted, summary: preview.summary });
+        const summary = preview.summary;
+        // Advance lastRowIndex by processed count (same strategy as Google Sheets import)
+        try {
+            const currentSetting = await prisma_1.prisma.systemSetting.findUnique({ where: { key: 'import_last_row_index' } });
+            const current = currentSetting?.value ? Math.max(0, Number(currentSetting.value)) : 0;
+            const next = current + (summary?.processedCount || rows.length);
+            await prisma_1.prisma.systemSetting.upsert({
+                where: { key: 'import_last_row_index' },
+                update: { value: String(next) },
+                create: { key: 'import_last_row_index', value: String(next) },
+            });
+        }
+        catch { }
+        return res.json({ ok: true, inserted, summary });
     }
     catch (e) {
         next(e);

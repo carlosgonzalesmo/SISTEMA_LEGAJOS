@@ -45,7 +45,8 @@ router.get('/', auth_1.authMiddleware, denySysadmin, async (req, res, next) => {
             ];
         }
         const total = await legajos_service_1.LegajosService.count(where);
-        const data = await legajos_service_1.LegajosService.listPaged(where, pageNum, sizeNum);
+        // Use enhanced list that includes requester summary for requested legajos
+        const data = await legajos_service_1.LegajosService.listPagedWithRequested(where, pageNum, sizeNum);
         res.json({ page: pageNum, pageSize: sizeNum, total, data });
     }
     catch (e) {
