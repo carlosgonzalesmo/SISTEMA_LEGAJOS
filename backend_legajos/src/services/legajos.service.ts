@@ -7,6 +7,12 @@ export const LegajosService = {
   update: (id: number, data: Partial<{ codigo: string; titulo: string; descripcion?: string; dniCe?: string | null; estado: string }>) => prisma.legajo.update({ where: { id }, data }),
   delete: (id: number) => prisma.legajo.delete({ where: { id } }),
   count: (where: any) => prisma.legajo.count({ where }),
-  listPaged: (where: any, page: number, pageSize: number) =>
-    prisma.legajo.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, include: { usuario: true, archivos: true, currentHolder: true }, orderBy: { id: 'desc' } })
+  listPaged: (where: any, page: number, pageSize: number, orderBy?: { field: 'codigo' | 'titulo' | 'id'; dir: 'asc' | 'desc' }) =>
+    prisma.legajo.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: { usuario: true, archivos: true, currentHolder: true },
+      orderBy: orderBy ? { [orderBy.field]: orderBy.dir } as any : { id: 'desc' }
+    })
 };

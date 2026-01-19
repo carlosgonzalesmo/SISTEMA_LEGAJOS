@@ -24,7 +24,7 @@ async function denySysadmin(req: AuthRequest, res: any, next: any) {
 
 router.get('/', authMiddleware, denySysadmin, async (req, res, next) => {
 	try {
-		const { estado, usuarioId, search, page = '1', pageSize = '20' } = req.query as Record<string, string>;
+		const { estado, usuarioId, search, page = '1', pageSize = '20', sortBy, sortDir } = req.query as Record<string, string>;
 		const pageNum = Math.max(1, parseInt(page, 10) || 1);
 		const sizeNum = Math.min(100, Math.max(1, parseInt(pageSize, 10) || 20));
 		const where: any = {};
@@ -38,8 +38,16 @@ router.get('/', authMiddleware, denySysadmin, async (req, res, next) => {
 				{ dniCe: { contains: search } }
 			];
 		}
+		let orderBy: { field: 'codigo' | 'titulo' | 'id'; dir: 'asc' | 'desc' } | undefined;
+		if (sortBy) {
+			const field = sortBy.toLowerCase();
+			if (field === 'codigo' || field === 'titulo') {
+				const dir = (sortDir?.toLowerCase() === 'asc' || sortDir?.toLowerCase() === 'desc') ? sortDir.toLowerCase() as 'asc' | 'desc' : 'asc';
+				orderBy = { field: field as any, dir };
+			}
+		}
 		const total = await LegajosService.count(where);
-		const data = await LegajosService.listPaged(where, pageNum, sizeNum);
+		const data = await LegajosService.listPaged(where, pageNum, sizeNum, orderBy);
 		res.json({ page: pageNum, pageSize: sizeNum, total, data });
 	} catch (e) { next(e); }
 });
