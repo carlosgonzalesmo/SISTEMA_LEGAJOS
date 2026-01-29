@@ -27,6 +27,7 @@
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "csv-parse": "^5.5.6",
     "google-auth-library": "^10.5.0",
     "googleapis": "^166.0.0",
     "jsonwebtoken": "^9.0.2",

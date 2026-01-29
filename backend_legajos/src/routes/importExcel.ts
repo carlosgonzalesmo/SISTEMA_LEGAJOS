@@ -108,9 +108,16 @@ router.post('/commit', authMiddleware, requireRole('admin'), upload.single('file
     for (const c of candidates) {
       const codigo = c.codigo;
       const nombre = c.nombre;
-      const dniCe = c.dniCe || null;
+      let dniCe = c.dniCe || null;
       if (!codigo || !nombre) continue;
-      if (codes.has(codigo) || (dniCe && dnis.has(dniCe))) continue;
+      // Apply sentinel for empty DNI and avoid unique conflicts
+      const sentinel = 'NODOCUMENTADO';
+      if (!dniCe) {
+        dniCe = dnis.has(sentinel) ? null : sentinel;
+      } else if (dnis.has(dniCe)) {
+        // For non-sentinel duplicates, skip this candidate
+        continue;
+      }
       try {
         await prisma.legajo.create({ data: { codigo, titulo: nombre, descripcion: null, dniCe, estado: 'available', usuarioId: adminUserId } });
         inserted += 1; codes.add(codigo); if (dniCe) dnis.add(dniCe);

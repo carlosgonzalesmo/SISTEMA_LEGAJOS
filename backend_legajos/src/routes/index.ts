@@ -7,6 +7,7 @@ import authRouter from './auth';
 import workflowRouter from './workflow';
 import settingsRouter from './settings';
 import importExcelRouter from './importExcel';
+import importCsvRouter from './importCsv';
 // New grouped routers (architectural separation)
 import adminRouter from './admin';
 import sysadminRouter from './sysadmin';
@@ -22,6 +23,7 @@ router.use('/auth', authRouter);
 router.use('/workflow', workflowRouter);
 router.use('/settings', settingsRouter);
 router.use('/import', importExcelRouter);
+router.use('/import-csv', importCsvRouter);
 
 // New hierarchical architecture (phase 1):
 // /admin -> operational domain (legajos CRUD, archivos, workflow lifecycle)
