@@ -1,316 +1,205 @@
 # Backend Legajos API
 
-Backend oficial para el sistema de gestión de legajos (`applegajos`). Provee API REST + eventos en tiempo real (Socket.IO), auditorías de tenencia y recuperación, y un flujo completo de solicitudes / préstamos / devoluciones. Reemplaza el almacenamiento KV/localStorage por PostgreSQL + Prisma y añade trazabilidad.
+Backend Node.js/Express para gestión de legajos físicos, con autenticación JWT, workflow de solicitudes/devoluciones, auditoría de tenencia y eventos en tiempo real vía Socket.IO.
 
-## Stack
-- Node.js + Express + TypeScript
-- PostgreSQL (Docker)
-- Prisma ORM
-- Autenticación JWT (bcrypt para hashing)
-- Validaciones con Zod
+## Estado real del proyecto
+
+Este repositorio contiene **solo backend** (no frontend). La API está en `backend_legajos/` y hoy incluye:
+
+- API REST bajo `/api/*`.
+- Rutas legacy y rutas nuevas agrupadas por dominio (`/api/admin/*` y `/api/sysadmin/*`).
+- Importación de legajos desde **Google Sheets**, **Excel (.xlsx)** y **CSV**.
+- Prisma + PostgreSQL como persistencia.
+- Tests unitarios/Jest para lógica de importación.
+
+## Stack técnico
+
+- Node.js + Express 5 + TypeScript
+- Prisma ORM + PostgreSQL
+- JWT (`jsonwebtoken`) + `bcryptjs`
+- Validación con Zod
+- Socket.IO
+- Multer + `xlsx` + `csv-parse`
+
+## Estructura principal
+
+```text
+backend_legajos/
+├─ src/
+│  ├─ routes/         # auth, usuarios, roles, legajos, workflow, imports, settings
+│  ├─ services/       # lógica de negocio (legajos, usuarios, import, etc.)
+│  ├─ middleware/     # auth, roles, manejo de errores
+│  ├─ lib/            # utilidades (logger, normalización legajo)
+│  ├─ app.ts          # app Express y middlewares globales
+│  └─ index.ts        # arranque HTTP + Socket.IO + seed inicial
+├─ prisma/schema.prisma
+├─ __tests__/         # pruebas Jest (import.service / preview)
+└─ docker-compose.yml # PostgreSQL local
+```
 
 ## Variables de entorno
-```
-DATABASE_URL=postgresql://usuario:password@localhost:5432/legajosdb?schema=public
-JWT_SECRET=cambia-esto-en-produccion
-CORS_ORIGIN=http://localhost:5000
-ADMIN_EMAIL=sysadmin@test.com
-ADMIN_NAME=SysAdmin
-ADMIN_PASSWORD=sys123
-AUTO_SEED_ADMIN=false
-```
 
-## Modelos principales (Prisma)
+Usa `.env.example` como base.
 
-| Modelo | Propósito | Notas |
-|--------|-----------|-------|
-| `Usuario` | Cuentas con rol (`admin`, `sysadmin`, `user`) y estado activo/inactivo | Relación con legajos creados y auditorías |
-| `Rol` | Tabla de roles (sembrada automáticamente) | `sysadmin` restringido del workflow operativo |
-| `Legajo` | Archivo físico con código normalizado (`L-0001`) y estado | Estados: `available`, `requested`, `on-loan`, `pending-return`, `blocked` |
-| `Solicitud` | Petición de uno o varios legajos | Estados: `PENDING`, `APPROVED`, `COMPLETED`, `REJECTED` |
-| `Prestamo` | Representa tenencia activa (derivado de confirmación de solicitud) | Status: `ACTIVE`, `PENDING_RETURN`, `RETURNED` |
-| `Devolucion` | Proceso de regreso de legajos | Estados: `PENDING_RETURN`, `RETURNED` |
-| `LegajoHolderHistory` | Auditoría de titular (inicio / fin) | Duración calculable en frontend |
-| `LegajoRecoveryHistory` | Auditoría de desbloqueos con motivo | Generado en `POST /legajos/:id/unlock` |
+Obligatorias:
 
-Estados de `Legajo` se actualizan en cada transición del workflow y se emiten en tiempo real (`legajo:updated`).
+- `DATABASE_URL`
+- `JWT_SECRET`
 
-## Endpoints principales
+Comunes:
 
-### Arquitectura de Rutas (Nueva Agrupación)
-Para facilitar la separación de responsabilidades entre operaciones diarias y gobernanza del sistema, se introducen prefijos jerárquicos:
+- `PORT` (default: `3001`)
+- `CORS_ORIGIN` (default: `http://localhost:5000`)
+- `AUTO_SEED_ADMIN`
+- `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD`
 
-| Prefijo | Dominio | Contenido | Acceso Global |
-|---------|---------|-----------|---------------|
-| `/admin` | Operacional | Legajos, archivos, workflow (solicitudes/devoluciones) | Abierto a `admin` y `user` (sysadmin bloqueado internamente) |
-| `/sysadmin` | Gobernanza | Usuarios, roles, settings | Restringido a `sysadmin` |
+Para import Google Sheets:
 
-Detalles:
-1. Las rutas legacy (/usuarios, /roles, /legajos, /archivos, /workflow, /settings) siguen expuestas para compatibilidad durante la transición del frontend.
-2. `/sysadmin/settings` exige rol `sysadmin`; `/settings` permite lectura por otros roles (p.ej. el límite de préstamos) mientras se actualiza el consumo desde el frontend.
-3. No se aplica un guard global en `/admin` para preservar la capacidad del usuario estándar de crear solicitudes y gestionar sus devoluciones; los controles finos (e.g. `requireRole('admin')`, `denySysadmin`) permanecen dentro de cada sub‑router.
-4. Eventualmente se podrá retirar el montaje legacy y forzar el consumo exclusivamente bajo los prefijos nuevos tras una fase de deprecación.
+- `GOOGLE_SHEETS_ID`
+- `GOOGLE_SHEETS_RANGE`
+- `GOOGLE_SHEETS_CREDENTIALS_BASE64`
+- `IMPORT_ROW_LIMIT`
+- `IMPORT_COOLDOWN_MINUTES`
 
-Tabla de ejemplo de migración (legacy -> nuevo):
+## Instalación y ejecución local
 
-| Legacy | Nuevo sugerido |
-|--------|----------------|
-| `/legajos` | `/admin/legajos` |
-| `/archivos` | `/admin/archivos` |
-| `/workflow/solicitudes` | `/admin/workflow/solicitudes` |
-| `/workflow/devoluciones` | `/admin/workflow/devoluciones` |
-| `/usuarios` | `/sysadmin/usuarios` |
-| `/roles` | `/sysadmin/roles` |
-| `/settings` (lectura) | `/sysadmin/settings` (lectura/escritura) |
+1. Instalar dependencias:
 
-Fase actual: coexistencia. El frontend puede comenzar a consumir los nuevos prefijos sin romper integraciones existentes.
-
-### Auth
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | /api/auth/signup | Registro de usuario |
-| POST | /api/auth/login  | Login y obtención de JWT |
-
-Payload signup:
-```json
-{
-  "nombre": "Carlos",
-  "email": "carlos@example.com",
-  "password": "superseguro",
-  "rolId": 1
-}
+```bash
+cd backend_legajos
+npm ci
 ```
 
-Respuesta signup/login:
-```json
-{
-  "token": "<jwt>",
-  "user": { "id": 1, "nombre": "Carlos", "email": "carlos@example.com", "rolId": 1 }
-}
-```
+2. Levantar PostgreSQL local:
 
-### Usuarios (requiere Authorization: Bearer <token>)
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | /api/usuarios | Listar usuarios (solo sysadmin) |
-| GET | /api/usuarios/:id | Obtener usuario (sysadmin o el propio usuario vía /me) |
-| POST | /api/usuarios | Crear usuario (solo sysadmin) |
-| PUT | /api/usuarios/:id | Actualizar usuario (sysadmin o self sin cambio de rol) |
-| DELETE | /api/usuarios/:id | Eliminar usuario (solo sysadmin) |
-| POST | /api/usuarios/purge | Eliminar en bloque usuarios (solo sysadmin; excluye al solicitante salvo includeSelf) |
-
-### Roles
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | /api/roles | Listar roles (solo sysadmin) |
-| POST | /api/roles | Crear rol (solo sysadmin) |
-
-### Legajos (protegido)
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | /api/legajos | Listar con filtros (estado, usuario, búsqueda, paginación) |
-| GET | /api/legajos/:id | Obtener legajo |
-| GET | /api/legajos/by-codigo/:codigo | Buscar por código flexible (normaliza padding) |
-| POST | /api/legajos | Crear (normaliza código a 4 dígitos) |
-| PUT | /api/legajos/:id | Actualizar (impide cambio de código si está en préstamo) |
-| DELETE | /api/legajos/:id | Eliminar |
-| POST | /api/legajos/:id/unlock | Desbloquear (admin) y registrar motivo en auditoría |
-| GET | /api/legajos/:id/holder-history | Auditoría de titulares (admin) |
-| GET | /api/legajos/:id/recoveries | Auditoría de recuperaciones (admin) |
-
-### Archivos (protegido)
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | /api/archivos | Registrar archivo asociado a legajo |
-| DELETE | /api/archivos/:id | Eliminar archivo |
-
-### Workflow (solicitudes / devoluciones)
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | /api/workflow/solicitudes | Crear solicitud (user/admin) |
-| GET | /api/workflow/solicitudes | Listar solicitudes |
-| POST | /api/workflow/solicitudes/:id/prepare | Preparar (marca encontrados / bloqueados) (admin) |
-| POST | /api/workflow/solicitudes/:id/confirm-receipt | Confirmar recepción (user) -> genera tenencia |
-| POST | /api/workflow/devoluciones | Iniciar devolución (user/admin) |
-| GET | /api/workflow/devoluciones | Listar devoluciones |
-| POST | /api/workflow/devoluciones/:id/confirm | Confirmar devolución (admin) |
-| POST | /api/workflow/clear | Limpiar transacciones (admin) |
-
-Transiciones emiten eventos Socket.IO para sincronización en tiempo real.
-
-## Eventos en Tiempo Real (Socket.IO)
-
-| Evento | Payload | Disparador |
-|--------|---------|-----------|
-| `legajo:created` | Legajo | Creación |
-| `legajo:updated` | Legajo | Cualquier cambio de estado / edición / unlock |
-| `legajo:deleted` | `{ id }` | Eliminación |
-| `solicitud:created` | Solicitud | Creación solicitud |
-| `solicitud:updated` | Solicitud | Preparación / aprobación / recepción |
-| `devolucion:created` | Devolución | Inicio devolución |
-| `devolucion:updated` | Devolución | Confirmación devolución |
-| `workflow:cleared` | `{ ok: true }` | Limpieza administrativa |
-| `user:created` | Usuario | Creación usuario |
-| `user:updated` | Usuario | Cambios rol / habilitar / deshabilitar |
-
-El cliente renueva autenticación del socket si cambia el JWT.
-
-## Uso rápido
-1. Iniciar PostgreSQL:
 ```bash
 docker compose up -d
 ```
-2. Generar cliente Prisma (si fuera necesario):
+
+3. Configurar entorno:
+
+```bash
+cp .env.example .env
+# editar valores reales
+```
+
+4. Generar cliente Prisma y aplicar esquema (según tu flujo):
+
 ```bash
 npx prisma generate
+npx prisma db push
 ```
-3. Sembrar roles base (admin / user / sysadmin) si aún no existen:
-```bash
-npx ts-node src/seedRoles.ts
-```
-4. Ejecutar servidor:
+
+5. Levantar backend en desarrollo:
+
 ```bash
 npm run dev
 ```
 
-Nota: El servidor ahora asegura automáticamente la existencia de los roles base al iniciar (ver `ensureRoles.ts`). Si faltan, los crea mediante upsert, evitando errores `P2003` al registrar usuarios.
+## Scripts disponibles
 
-### CORS
-El backend expone por defecto `Access-Control-Allow-Origin` apuntando a `http://localhost:5000` (frontend Vite). Puedes cambiarlo con `CORS_ORIGIN`.
+- `npm run dev` → desarrollo con `ts-node-dev`
+- `npm run build` → compila TypeScript a `dist/`
+- `npm start` → ejecuta `node dist/index.js`
+- `npm run seed:admin` → crea/actualiza sysadmin
+- `npm test` → ejecuta tests Jest
+- `npm run test:watch` → tests en modo watch
 
-Preflight exitoso debe devolver encabezados:
+## Arquitectura de rutas
+
+### Base
+
+- Health: `GET /`
+- API: `/api/*`
+
+### Rutas legacy (compatibilidad)
+
+- `/api/auth`
+- `/api/usuarios`
+- `/api/roles`
+- `/api/legajos`
+- `/api/archivos`
+- `/api/workflow`
+- `/api/settings`
+- `/api/import` (excel)
+- `/api/import-csv`
+
+### Rutas agrupadas (actual)
+
+- `/api/admin/*` (dominio operativo)
+  - `legajos`, `archivos`, `workflow`, `import`
+- `/api/sysadmin/*` (gobernanza)
+  - `usuarios`, `roles`, `settings`
+
+> Nota: Las rutas legacy siguen montadas para no romper consumidores existentes.
+
+## Modelos de datos (Prisma)
+
+Modelos principales:
+
+- `Usuario`, `Rol`
+- `Legajo`, `Archivo`
+- `Solicitud`, `SolicitudLegajo`
+- `Prestamo`
+- `Devolucion`, `DevolucionLegajo`
+- `LegajoHolderHistory`
+- `LegajoRecoveryHistory`
+- `SystemSetting`
+
+## Roles y acceso
+
+Roles base esperados:
+
+- `admin`
+- `user`
+- `sysadmin`
+
+Comportamiento implementado:
+
+- `sysadmin` gobierna usuarios/roles/settings.
+- `admin` opera legajos/workflow/importaciones administrativas.
+- `user` participa en flujo operativo permitido (p. ej. solicitudes/devoluciones según endpoint).
+- Existen guards por endpoint y middleware para bloquear acceso indebido (incluyendo restricciones a `sysadmin` en rutas operativas).
+
+## Importaciones
+
+Actualmente hay 3 vías:
+
+1. **Google Sheets** (`/api/admin/import/*`)
+   - `POST /sync`
+   - `GET /status`
+   - `GET /preview`
+   - `POST /reset-lastrow`
+
+2. **Excel (.xlsx)** (`/api/import/*`)
+   - carga de archivo y preview/commit
+
+3. **CSV** (`/api/import-csv/*`)
+   - preview y commit con validaciones de duplicados/campos
+
+## Eventos Socket.IO
+
+El servidor inicializa Socket.IO en el arranque y emite eventos de cambios operativos (legajos, solicitudes, devoluciones y usuarios) para sincronización en tiempo real con el cliente.
+
+## Semillas y arranque seguro
+
+Al iniciar:
+
+- se verifican/crean roles base (`ensureRoles`),
+- se evalúa creación de `sysadmin`:
+  - si `AUTO_SEED_ADMIN=true`, fuerza seed,
+  - si no existe ningún `sysadmin`, ejecuta seed fallback.
+
+## Testing
+
+Sí hay pruebas automatizadas en `__tests__/` (Jest), enfocadas actualmente en utilidades y preview del servicio de importación.
+
+Ejecutar:
+
+```bash
+npm test
 ```
-Access-Control-Allow-Origin: http://localhost:5000
-Access-Control-Allow-Headers: Content-Type, Authorization
-Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS,PATCH
-```
-
-## Seguridad y Validaciones
-- Zod en entradas críticas (`unlock`, creación/edición legajo, preparación solicitud) con refinamientos para `codigo` y `dniCe`.
-- Helper central `src/lib/legajo.ts` estandariza normalización (`L-5` vs `L-0005`) y validación de longitud de DNI/CE (8 ó 12 dígitos).
-- La creación de legajos persiste `dniCe` como `null` cuando se omite para respuestas consistentes.
-- Restricción sysadmin en rutas operativas (middleware `denySysadmin`).
-- Protección último admin activo al modificar roles.
-- Motivo de desbloqueo obligatorio (2–500 caracteres) auditado.
-
-## Próximas mejoras
-- Permisos más granulares (por recurso y acción)
-- Paginación avanzada (cursor / filtros combinados)
-- Refresh tokens y rotación
-- Logs estructurados + métricas Prometheus
-- Exportación de auditorías (CSV / JSON)
-- Bulk update / acciones masivas
-- Hardening de CORS dinámico (lista blanca múltiple)
-
-## Matriz de Acceso (Roles)
-
-| Recurso / Acción | admin | sysadmin | user |
-|------------------|:-----:|:-------:|:----:|
-| Listar usuarios | ✗ | ✓ | ✗ |
-| Crear usuario | ✗ | ✓ | ✗ |
-| Cambiar rol usuario | ✗ | ✓ (no último admin) | ✗ |
-| Deshabilitar / habilitar usuario | ✗ | ✓ | ✗ |
-| Legajos CRUD | ✓ | ✗ | ✓ (lectura) |
-| Workflow: crear solicitud | ✓ | ✗ | ✓ |
-| Workflow: preparar solicitud | ✓ | ✗ | ✗ |
-| Workflow: confirmar recepción | ✗ | ✗ | ✓ |
-| Workflow: iniciar devolución | ✓ | ✗ | ✓ |
-| Workflow: confirmar devolución | ✓ | ✗ | ✗ |
-| Limpiar workflow (/workflow/clear) | ✓ | ✗ | ✗ |
-| Crear rol | ✗ | ✓ |
-| Audit Log | ✓ | ✗ |
-| Purge usuarios (/api/usuarios/purge) | ✗ | ✓ | ✗ |
-| Unlock legajo | ✓ (estado bloqueado) | ✗ | ✗ |
-| Ver auditoría titulares | ✓ | ✗ | ✗ |
-| Ver auditoría recuperaciones | ✓ | ✗ | ✗ |
-
-Reglas clave:
-1. Gestión de usuarios (listar, crear, cambio de rol, habilitar/deshabilitar) es exclusiva de sysadmin.
-2. Último admin activo no puede cambiarse de rol ni deshabilitarse (protección aplicada cuando un sysadmin intenta modificarlo).
-3. Sysadmin obtiene 403 en rutas de legajos y workflow.
-4. Validaciones consistentes (Zod + mensajes traducibles).
-5. Purge masivo elimina workflow, legajos y usuarios; por defecto mantiene al sysadmin que lo ejecuta.
-
-## Integración Frontend
-El frontend utiliza hooks (`useLegajos`, `useWorkflow`, `useAuth`) y suscripciones Socket.IO para mantener estado reactivo.
-
-Cada cambio relevante emite un evento y el cliente actualiza caches sin recargar toda la página.
-
-Header requerido en peticiones:
-```
-Authorization: Bearer <token>
-```
-
-Errores devuelven `{ error: <mensaje> }` normalizado para mostrar toasts.
-
-## Recuperación de Credenciales / Usuario SysAdmin
-
-Si las pruebas o un borrado accidental eliminaron usuarios y ahora ningún login funciona (o ejecutaste purge con includeSelf):
-
-1. Ejecuta el script de roles (opcional si ya existen):
-  ```bash
-  npx ts-node src/seedRoles.ts
-  ```
-2. Ejecuta el script de recreación de sysadmin:
-  ```bash
-  ADMIN_EMAIL=sysadmin@test.com ADMIN_NAME=SysAdmin ADMIN_PASSWORD="sys123" npx ts-node src/seedAdmin.ts
-  ```
-3. Usa esas credenciales (rol sysadmin) para iniciar sesión y crear nuevos usuarios.
-
-Puedes cambiar las variables de entorno para definir correo y contraseña personalizados.
-
-Nota: Este paquete se entrega sin suite de tests incorporada en producción; usar una base separada para QA si se reintroducen pruebas.
-
-### Auto-seeding en arranque (opcional)
-Si defines `AUTO_SEED_ADMIN=true` en tu entorno al iniciar el backend, éste importará dinámicamente `seedAdmin.ts` y recreará (o actualizará) el usuario sysadmin con las credenciales provistas en `ADMIN_EMAIL`, `ADMIN_NAME` y `ADMIN_PASSWORD`.
-
-Fallback automático: incluso si `AUTO_SEED_ADMIN` es `false`, el servidor comprobará si existe algún usuario con rol `sysadmin`. Si no encuentra ninguno, ejecutará el seed de forma automática (una sola vez) para garantizar que siempre puedas recuperar acceso administrativo. Esto evita quedarte bloqueado tras un purge o una base nueva sin necesidad de activar la bandera.
-
-Logs esperados al arrancar con auto-seeding activo:
-```
-AUTO_SEED_ADMIN=true detectado. Ejecutando seedAdmin...
-Usuario creado: sysadmin@test.com (rol=sysadmin) id=...
-Seed admin/sysadmin completado (o actualizado).
-```
-
-Seguridad / buenas prácticas:
-- Activa `AUTO_SEED_ADMIN` solo para el primer despliegue o recuperación; luego ponlo en `false`.
-- Si lo dejas en `false` y ya existe un sysadmin, no se ejecuta seed; si no existe, se hace seed por fallback.
-- Cambia la contraseña por defecto y almacénala en un gestor seguro.
-- Si `AUTO_SEED_ADMIN` permanece `true`, cualquier arranque volverá a sobrescribir la contraseña del usuario sysadmin con el valor de la variable de entorno.
-- En entornos CI/CD puedes usar el script independiente: `npm run seed:admin` (tras compilar usar `node dist/seedAdmin.js`).
-
-Scripts disponibles:
-```
-npm run seed:admin   # Desarrollo (ts-node-dev)
-```
-
-En producción (después de `npm run build`):
-```
-node dist/seedAdmin.js
-```
-
-## Auditorías
-- Titulares: inicio/fin de cada período de préstamo; usado para calcular duración visible.
-- Recuperaciones: cada desbloqueo con usuario y motivo.
-
-## Despliegue y Persistencia DNI/CE
-Para producción, el script `npm start` ejecuta primero `npm run build` (vía `prestart`), asegurando que `dist/` refleja la lógica más reciente (incluyendo validación y persistencia de `dniCe`).
-
-Puntos clave:
-1. El campo `dniCe` se guarda como `string` (8 ó 12 dígitos) o `null` cuando se omite.
-2. La búsqueda (`search`) en `/api/legajos` incluye coincidencias en `codigo`, `titulo`, `descripcion` y `dniCe`.
-3. Si alguna vez se detecta comportamiento antiguo, borrar manualmente `dist/` y reconstruir.
-
-Flujo recomendado de build:
-```
-npm ci
-npm run build
-npm start
-```
-
-No se incluyen tests en este paquete de producción para minimizar peso y ruido.
-
 
 ## Licencia
+
 MIT
