@@ -241,6 +241,46 @@ router.post('/solicitudes/:id/confirm-receipt', authMiddleware, async (req: Auth
   } catch (e) { next(e); }
 });
 
+// Cancel solicitud (user) - only creator can cancel and only when pending
+router.post('/solicitudes/:id/cancel', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.userId) return res.status(401).json({ error: 'No autenticado' });
+    if (await isSysadmin(req.userId)) return res.status(403).json({ error: 'No autorizado' });
+    const id = Number(req.params.id);
+    const solicitud = await (prisma as any).solicitud.findUnique({ where: { id }, include: { legajos: true } });
+    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    // Only creator can cancel
+    if (solicitud.usuarioId !== req.userId) return res.status(403).json({ error: 'No autorizado' });
+    // Only pending solicitudes can be cancelled
+    if (solicitud.status !== 'PENDING') return res.status(400).json({ error: 'Sólo se pueden cancelar solicitudes pendientes' });
+
+    const legajoIds = solicitud.legajos.map((l: any) => l.legajoId);
+    // Use transaction to mark solicitud rejected and restore legajo states where appropriate
+    const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Reset legajo estado to available only if currently requested
+      if (legajoIds.length) {
+        await tx.legajo.updateMany({ where: { id: { in: legajoIds }, estado: 'requested' }, data: { estado: 'available' } });
+      }
+      const u = await (tx as any).solicitud.update({ where: { id }, data: { status: 'REJECTED', rejectedAt: new Date() } });
+      return u;
+    });
+
+    const full = await (prisma as any).solicitud.findUnique({ where: { id: updated.id }, include: { legajos: { include: { legajo: true } }, usuario: true } });
+    res.json(full);
+    try { (global as any).io?.emit('solicitud:updated', full); debug('[socket] solicitud:updated (cancel)', full.id); } catch {}
+    // Emit legajo updates
+    try {
+      if (legajoIds.length) {
+        const legajos = await prisma.legajo.findMany({ where: { id: { in: legajoIds } }, include: { currentHolder: true } });
+        for (const lg of legajos) {
+          (global as any).io?.emit('legajo:updated', lg);
+          debug('[socket] legajo:updated (cancel solicitud)', lg.id);
+        }
+      }
+    } catch (e) { logError('Emit legajo:updated (cancel solicitud) error', e); }
+  } catch (e) { next(e); }
+});
+
 // Iniciar devolución (user) - mark legajos pending-return
 router.post('/devoluciones', authMiddleware, async (req: AuthRequest, res, next) => {
   try {
